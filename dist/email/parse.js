@@ -408,6 +408,22 @@ function extractText(bodyLatin1, contentTypeValue, cteValue, depth, ctx) {
     return {};
 }
 /**
+ * Trim trailing SPACE/TAB from a line via a LINEAR backward walk. Replaces a
+ * `line.replace(/[\t ]+$/, "")` — which is O(n²) on a long space run followed by a
+ * non-space (every start position re-scans the whole run; measured >60s on a single
+ * 200 KB space line). This walks back from the end once: O(trailing-run).
+ */
+function trimTrailingSpaceTab(line) {
+    let end = line.length;
+    while (end > 0) {
+        const c = line.charCodeAt(end - 1);
+        if (c !== 0x20 && c !== 0x09)
+            break;
+        end--;
+    }
+    return end === line.length ? line : line.slice(0, end);
+}
+/**
  * Split a multipart body on its boundary. Returns each part's raw content (between
  * `--boundary` delimiter lines), dropping the preamble and epilogue. Tolerant of
  * CRLF/LF and trailing whitespace on the delimiter line. Bounded by MAX_PARTS.
@@ -419,7 +435,7 @@ function splitMultipart(body, boundary) {
     const lines = body.replace(/\r\n/g, "\n").replace(/\r/g, "\n").split("\n");
     let currentLines;
     for (const line of lines) {
-        const trimmedRight = line.replace(/[\t ]+$/, "");
+        const trimmedRight = trimTrailingSpaceTab(line);
         if (trimmedRight === delim || trimmedRight === `${delim}--`) {
             if (currentLines !== undefined) {
                 parts.push(currentLines.join("\n"));
@@ -438,18 +454,24 @@ function splitMultipart(body, boundary) {
     }
     return parts;
 }
+/** Cap on the HTML length processed by {@link htmlToText} (belt-and-braces DoS guard). */
+const MAX_HTML_CHARS = 1024 * 1024;
 /**
- * Best-effort strip of HTML to plain text — remove tags and decode a handful of
- * named entities. NOT a sanitiser (we never re-emit HTML); this only derives a
- * readable text body when the message has no text/plain part. Linear, no
- * backtracking regex on the tag scan.
+ * Best-effort strip of HTML to plain text — drop script/style blocks + all tags and
+ * decode a handful of named entities. NOT a sanitiser (we never re-emit HTML); this
+ * only derives a readable text body when the message has no text/plain part.
+ *
+ * ALL scanning is done with LINEAR `indexOf`-driven passes (never a backtracking
+ * regex): script/style blocks via {@link stripBlock}, the remaining tags via
+ * {@link stripTags}. Both a bounded-lazy regex like `<script[\s\S]{0,N}?</script>`
+ * AND a bounded `<[^>]{0,N}>` tag strip go super-linear on crafted input (a flood of
+ * `<` with no `>`, so every start position re-scans up to N chars), so both are
+ * deliberately avoided.
  */
 function htmlToText(html) {
-    // Drop script/style CONTENT entirely, then strip remaining tags.
-    const noScript = html
-        .replace(/<script[\s\S]{0,100000}?<\/script>/gi, " ")
-        .replace(/<style[\s\S]{0,100000}?<\/style>/gi, " ");
-    const noTags = noScript.replace(/<[^>]{0,8192}>/g, " ");
+    const capped = html.length > MAX_HTML_CHARS ? html.slice(0, MAX_HTML_CHARS) : html;
+    const noBlocks = stripBlock(stripBlock(capped, "script"), "style");
+    const noTags = stripTags(noBlocks);
     return noTags
         .replace(/&nbsp;/gi, " ")
         .replace(/&amp;/gi, "&")
@@ -459,6 +481,60 @@ function htmlToText(html) {
         .replace(/&#39;|&apos;/gi, "'")
         .replace(/[\t ]{2,}/g, " ")
         .replace(/\n{3,}/g, "\n\n");
+}
+/**
+ * Remove `<tag …>…</tag>` blocks (CONTENT included) via a single linear pass. An
+ * unterminated opening `<tag` drops the remainder (safe — no re-emit). O(n): every
+ * `indexOf` starts where the last left off, so no character is scanned twice.
+ */
+function stripBlock(html, tag) {
+    const lower = html.toLowerCase();
+    const open = `<${tag}`;
+    const close = `</${tag}>`;
+    let out = "";
+    let i = 0;
+    while (i < html.length) {
+        const start = lower.indexOf(open, i);
+        if (start === -1) {
+            out += html.slice(i);
+            break;
+        }
+        out += html.slice(i, start);
+        const end = lower.indexOf(close, start + open.length);
+        if (end === -1)
+            break; // unterminated block → drop the remainder
+        i = end + close.length;
+    }
+    return out;
+}
+/**
+ * Strip `<…>` tags, replacing each with a single space, via a single LINEAR pass.
+ * A `<` with no following `>` is kept as literal text (harmless — the output is
+ * plain text, never re-emitted as HTML). O(n): each `indexOf` resumes where the
+ * previous left off, so no character is ever scanned twice — unlike a bounded
+ * `<[^>]{0,N}>` regex, which re-scans up to N chars at EVERY `<` on a `<`-flood and
+ * so is super-linear (measured tens of seconds on a few hundred KB of `<`).
+ */
+function stripTags(html) {
+    let out = "";
+    let i = 0;
+    while (i < html.length) {
+        const lt = html.indexOf("<", i);
+        if (lt === -1) {
+            out += html.slice(i);
+            break;
+        }
+        out += html.slice(i, lt);
+        const gt = html.indexOf(">", lt + 1);
+        if (gt === -1) {
+            // No closing `>` anywhere after — the remainder holds no tag; keep it as text.
+            out += html.slice(lt);
+            break;
+        }
+        out += " ";
+        i = gt + 1;
+    }
+    return out;
 }
 // --- address parsing ---------------------------------------------------------
 /**
