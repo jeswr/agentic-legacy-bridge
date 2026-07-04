@@ -42,13 +42,15 @@
  *     `X-Slack-Retry-Num` / `X-Slack-Retry-Reason`) otherwise. The service must
  *     verify → transform → create-only pod write → 200 quickly; the LLM pass is
  *     decoupled (M2-DESIGN.md §3.6).
- *  3. **Retry / replay dedupe.** `event_id` (and `ts`) are globally unique, so a
- *     deterministic in-pod slug makes a retried/replayed delivery map to the SAME
- *     URL. NOTE the M2.1 `importInbound` write path is a plain `PUT` (overwrite) and
- *     does NOT itself provide idempotency; the M2.4 service must add create-only
- *     writes (`If-None-Match: *`, treating `412` as already-imported) — the property
- *     the design assigns to the service, not this adapter (M2-DESIGN.md §3.3/§3.4).
- *     No dedupe table is then needed.
+ *  3. **Retry / replay dedupe.** `event_id` is globally unique; a Slack `ts` is only
+ *     CONVERSATION-scoped (which is why `messageId`/`threadId` above are qualified
+ *     with the conversation id) — so a deterministic in-pod slug must key on
+ *     `event_id` (or a conversation-qualified id), NOT a bare `ts`, to map a
+ *     retried/replayed delivery to the SAME URL. NOTE the M2.1 `importInbound` write
+ *     path is a plain `PUT` (overwrite) and does NOT itself provide idempotency; the
+ *     M2.4 service must add create-only writes (`If-None-Match: *`, treating `412` as
+ *     already-imported) — the property the design assigns to the service, not this
+ *     adapter (M2-DESIGN.md §3.3/§3.4). No dedupe table is then needed.
  *  4. **`url_verification`.** The endpoint-registration handshake
  *     (`{ type: "url_verification", challenge }`) is answered by the service (echo
  *     `challenge`); it is NOT a message, so this transform REFUSES it
