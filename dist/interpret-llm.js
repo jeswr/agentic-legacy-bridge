@@ -148,13 +148,14 @@ function withinSaneWindow(iso, now) {
     return t >= lo && t <= hi;
 }
 /**
- * The maximum score a datum of a given calibration CLASS may reach — the ceiling the
- * single-sample deterministic cross-check itself uses for that class. k-sample
- * agreement raises a kept item's score toward its agreement ratio but is CLAMPED to
- * this ceiling, so agreement can never push a `SelfReported` datum past
- * {@link SPAN_ONLY_CAP} (which would be laundering) nor a `Calibrated` one past
- * {@link REDERIVED_CAP}. A `Verified` datum (never produced by the default tasks) has
- * no synthetic cap.
+ * The ceiling applied to the k-sample AGREEMENT CONTRIBUTION for a calibration CLASS —
+ * the maximum score agreement ALONE may synthesise for that class (the cap the
+ * single-sample cross-check uses). Agreement may raise a kept item's score up to this
+ * ceiling, but the deterministic base score is preserved unclamped, so agreement can
+ * never push a `SelfReported` datum past {@link SPAN_ONLY_CAP} (which would be
+ * laundering) nor invent a `Calibrated`-range score for one — while a legitimately-high
+ * `Calibrated`/`Verified` base (a custom task may exceed {@link REDERIVED_CAP}) is never
+ * LOWERED. A `Verified` datum (never produced by the default tasks) has no synthetic cap.
  */
 function classScoreCeiling(calibration) {
     switch (calibration) {
@@ -554,12 +555,14 @@ export class LlmInterpreter {
             if (base.score <= AUDIT_FLOOR)
                 return base;
             const ratio = agreement.get(item) ?? 0;
-            // Agreement may raise the score toward `ratio`, but never BELOW the
-            // deterministic score and never ABOVE the ceiling of the class the cross-check
-            // assigned. The calibration CLASS is preserved verbatim (SelfReported stays
-            // SelfReported); agreement raises the score WITHIN the class only.
+            // Agreement may raise the score toward `ratio`, but never BELOW the deterministic
+            // score. Clamp ONLY the agreement CONTRIBUTION to the class ceiling (never the
+            // deterministic base itself), so a `SelfReported` datum can never be pushed past
+            // {@link SPAN_ONLY_CAP} (laundering) while a legitimately-high `Calibrated` base
+            // (a custom task may exceed {@link REDERIVED_CAP}) is preserved, never lowered.
+            // The calibration CLASS is preserved verbatim — agreement raises score in-class.
             const ceiling = classScoreCeiling(base.calibration);
-            const score = Math.min(Math.max(base.score, ratio), ceiling);
+            const score = Math.max(base.score, Math.min(ratio, ceiling));
             return { score, calibration: base.calibration };
         });
     }

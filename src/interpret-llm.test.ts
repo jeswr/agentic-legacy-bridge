@@ -674,6 +674,53 @@ describe("LlmInterpreter — k-sample NEVER launders calibration class (regressi
     // 0.667 agreement must NOT lower the Calibrated base 0.9 → the score stays ≥ 0.9.
     expect(pol?.confidence).toBeGreaterThanOrEqual(0.9);
   });
+
+  it("k-sample never LOWERS a custom Calibrated score above the default cap (only clamps the agreement contribution)", async () => {
+    // A custom task legitimately returns a Calibrated score ABOVE REDERIVED_CAP (0.95).
+    // The class ceiling must clamp only the AGREEMENT contribution, never the
+    // deterministic base — so the 0.98 base survives k-sample intact (not clamped to 0.95).
+    const highCal: ExtractionTask<{ value: string; confidence: number; sourceSpan: string }> = {
+      id: "high-cal",
+      securityBearing: false,
+      schema: {},
+      validate(raw) {
+        const items = (raw as { items?: unknown[] })?.items;
+        if (!Array.isArray(items)) return { ok: false, reason: "high-cal: no items" };
+        const out: { value: string; confidence: number; sourceSpan: string }[] = [];
+        for (const it of items as { value: string; confidence: number; sourceSpan: string }[]) {
+          out.push({ value: it.value, confidence: it.confidence, sourceSpan: it.sourceSpan });
+        }
+        return { ok: true, items: out };
+      },
+      signature(i) {
+        return `hc:${i.value}`;
+      },
+      calibrate() {
+        return { score: 0.98, calibration: "Calibrated" };
+      },
+      lower(item, index, { docIri }) {
+        return [
+          {
+            subject: `${docIri}#hc-${index}`,
+            predicate: SCHEMA_NAME,
+            object: { kind: "literal", value: item.value },
+          },
+        ];
+      },
+    };
+    const out = await new LlmInterpreter({
+      extractor: scriptedExtractor({
+        "high-cal": { items: [{ value: "x", confidence: 1, sourceSpan: "x" }] },
+      }),
+      kSamples: 3,
+      kAgreementThreshold: 0.66,
+      tasks: [highCal as unknown as ExtractionTask],
+    }).interpret(msg("anything"), ctx);
+    const datum = out.find((i) => i.predicate === SCHEMA_NAME);
+    expect(datum?.calibration).toBe("Calibrated");
+    // The deterministic 0.98 base is PRESERVED — NOT clamped down to the 0.95 default cap.
+    expect(datum?.confidence).toBeCloseTo(0.98, 5);
+  });
 });
 
 // ---------------------------------------------------------------------------
