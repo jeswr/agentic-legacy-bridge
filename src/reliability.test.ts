@@ -9,9 +9,13 @@ import {
   type Interpretation,
 } from "./reliability.js";
 import {
+  AGENTIC_CALIBRATION,
   AGENTIC_CONFIDENCE,
   AGENTIC_INTERPRETATION,
+  AGENTIC_INTERPRETATION_METHOD,
+  AGENTIC_LLM_INTERPRETATION,
   AGENTIC_SECURITY_BEARING,
+  AGENTIC_SELF_REPORTED,
   PROV_WAS_DERIVED_FROM,
 } from "./vocab.js";
 
@@ -95,6 +99,33 @@ describe("addInterpretation", () => {
     });
     if (iri === undefined) throw new Error("expected an interpretation IRI");
     expect(store.getQuads(iri, AGENTIC_SECURITY_BEARING, null, null)[0]?.object.value).toBe("true");
+  });
+
+  it("fails closed to the least-trusting method/calibration for an out-of-enum value", () => {
+    const store = new Store();
+    // An injected interpreter could emit a value outside the enum despite the type;
+    // it must NOT reach `namedNode(undefined)`.
+    const iri = addInterpretation(
+      store,
+      interp({
+        method: "Bogus" as unknown as Interpretation["method"],
+        calibration: "AlsoBogus" as unknown as Interpretation["calibration"],
+      }),
+      3,
+      { docIri: DOC, rawMessageIri: RAW },
+    );
+    if (iri === undefined) throw new Error("expected an interpretation IRI");
+    expect(store.getQuads(iri, AGENTIC_INTERPRETATION_METHOD, null, null)[0]?.object.value).toBe(
+      AGENTIC_LLM_INTERPRETATION,
+    );
+    expect(store.getQuads(iri, AGENTIC_CALIBRATION, null, null)[0]?.object.value).toBe(
+      AGENTIC_SELF_REPORTED,
+    );
+    // No quad may carry an empty/"undefined" IRI.
+    for (const q of store) {
+      expect(q.object.value).not.toBe("");
+      expect(q.object.value).not.toContain("undefined");
+    }
   });
 });
 

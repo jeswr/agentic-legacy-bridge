@@ -167,6 +167,24 @@ export function base64Url(input: string): string {
 }
 
 /**
+ * Injection-safe passthrough for the INTERNAL anchor IRIs this package mints — an
+ * absolute `urn:agentic:*` (and similar `urn:<nid>:<nss>`) carrying no
+ * IRIREF-forbidden char. Unlike {@link mintUrn} it does not re-encode; it VALIDATES
+ * an already-minted urn (`safeHttpIri(x) ?? asUrn(x)` is the pair used at every site
+ * where an anchor IRI — http(s) OR our own urn — becomes a `namedNode()`). Returns
+ * the value unchanged when it matches the tight `urn:` shape, else `undefined`
+ * (fail-closed — a `urn:` carrying `>`/space/etc. is rejected, never injected).
+ */
+export function asUrn(value: unknown): string | undefined {
+  // We only mint `urn:agentic:*` anchors ourselves (safe by construction). Accept an
+  // absolute `urn:` with no IRIREF-forbidden char; reject anything else.
+  if (typeof value === "string" && /^urn:[a-z0-9][a-z0-9-]{0,31}:[A-Za-z0-9._~%:-]+$/.test(value)) {
+    return value;
+  }
+  return undefined;
+}
+
+/**
  * Mint a deterministic, injection-safe `urn:agentic:<kind>:<b64url(key)>` IRI. All
  * of `kind` and the encoded `key` land in the `[A-Za-z0-9_-]`/fixed-literal space,
  * so the result carries no IRIREF-forbidden char by construction. Used for the

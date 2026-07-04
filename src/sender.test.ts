@@ -82,10 +82,30 @@ describe("addSenderPerson", () => {
 
   it("never emits an IRIREF-breakout character even from a hostile display name", () => {
     const store = new Store();
-    addSenderPerson(store, parse('From: "<script>" <a@b.com>'));
+    const parsed = parse('From: "<script>" <a@b.com>');
+    // The angle-addr is the REAL one after the quoted phrase — NOT `<script>` from
+    // inside the quotes (that would have parsed the address as `script`).
+    expect(parsed.from?.address).toBe("a@b.com");
+    addSenderPerson(store, parsed);
     for (const q of store) {
       expect(q.subject.value).not.toMatch(/[\r\n]/);
       if (q.object.termType === "NamedNode") expect(q.object.value).not.toMatch(/[<>"{}|\\^`]/);
+    }
+  });
+
+  it("keys identity on the REAL sender, not a mailbox smuggled into the quoted phrase", () => {
+    const store = new Store();
+    const parsed = parse('From: "Alice <victim@bank.com>" <attacker@evil.example>');
+    const { personIri } = addSenderPerson(store, parsed);
+    // The person node + mailto are keyed on the attacker's REAL mailbox — the
+    // victim's mailbox (smuggled inside the quotes) must appear nowhere in the graph.
+    expect(personIri).toBe(personIriFor(parsed));
+    expect(store.getQuads(personIri, SCHEMA_EMAIL, null, null)[0]?.object.value).toBe(
+      "mailto:attacker@evil.example",
+    );
+    for (const q of store) {
+      expect(q.subject.value).not.toMatch(/victim/);
+      if (q.object.termType === "NamedNode") expect(q.object.value).not.toMatch(/victim/);
     }
   });
 });

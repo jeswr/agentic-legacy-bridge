@@ -15,7 +15,7 @@
  */
 
 import { DataFactory, type Store } from "n3";
-import { safeHttpIri, sanitizeText } from "./safe-iri.js";
+import { asUrn, safeHttpIri, sanitizeText } from "./safe-iri.js";
 import {
   AGENTIC_ASSERTS_OBJECT,
   AGENTIC_ASSERTS_OBJECT_IRI,
@@ -178,15 +178,20 @@ export function addInterpretation(
     namedNode(AGENTIC_CONFIDENCE),
     literal(formatDecimal(clampConfidence(interp.confidence)), namedNode(`${XSD}decimal`)),
   );
+  // `method`/`calibration` are UNTRUSTED (an injected interpreter could emit an
+  // out-of-enum string despite the type). An unknown value must NOT reach
+  // `namedNode(undefined)`; fail closed to the LEAST-trusting member of each enum
+  // (an LLM interpretation / a self-reported score) so a malformed datum can never
+  // masquerade as a higher-trust one.
   store.addQuad(
     interpNode,
     namedNode(AGENTIC_INTERPRETATION_METHOD),
-    namedNode(METHOD_IRI[interp.method]),
+    namedNode(METHOD_IRI[interp.method] ?? AGENTIC_LLM_INTERPRETATION),
   );
   store.addQuad(
     interpNode,
     namedNode(AGENTIC_CALIBRATION),
-    namedNode(CALIBRATION_IRI[interp.calibration]),
+    namedNode(CALIBRATION_IRI[interp.calibration] ?? AGENTIC_SELF_REPORTED),
   );
   if (interp.securityBearing === true) {
     store.addQuad(
@@ -224,14 +229,6 @@ export function addInterpretation(
   );
 
   return interpIri;
-}
-
-/** A permissive urn:/absolute-IRI passthrough for the internal anchor IRIs we mint. */
-function asUrn(value: string): string | undefined {
-  // We only mint `urn:agentic:*` anchors ourselves (safe by construction). Accept an
-  // absolute `urn:` with no IRIREF-forbidden char; reject anything else.
-  if (/^urn:[a-z0-9][a-z0-9-]{0,31}:[A-Za-z0-9._~%:-]+$/.test(value)) return value;
-  return undefined;
 }
 
 /** Format a [0,1] number as a compact xsd:decimal string (always has a decimal point). */

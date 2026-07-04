@@ -14,7 +14,7 @@
 import { DataFactory, Store, Writer } from "n3";
 import type { EmailMessage } from "./email/types.js";
 import { addInterpretation, type Interpretation } from "./reliability.js";
-import { safeHttpIri, sanitizeText } from "./safe-iri.js";
+import { asUrn, safeHttpIri, sanitizeText } from "./safe-iri.js";
 import { addSenderPerson } from "./sender.js";
 import {
   AGENTIC_CHANNEL,
@@ -73,7 +73,20 @@ export interface AgenticGraphResult {
 /** Build the agentic Turtle graph for one inbound message. */
 export async function buildAgenticGraph(options: AgenticGraphOptions): Promise<AgenticGraphResult> {
   const store = new Store();
-  const raw = namedNode(options.rawMessageIri);
+  // Re-validate the raw-message anchor before it becomes a `namedNode()`. Although
+  // this IRI is normally minted internally (a `urn:agentic:raw:…`, safe by
+  // construction), `buildAgenticGraph` is a public API — an untrusted or malformed
+  // value carrying an IRIREF-forbidden char (`>`, newline, …) would break out of the
+  // Turtle `<...>` and inject arbitrary triples (potentially into a `.acl`). Route it
+  // through `safeHttpIri ?? asUrn` (the same guard `addInterpretation` uses) and fail
+  // closed if neither accepts it — there is no safe anchor to build the graph on.
+  const rawMessageIri = safeHttpIri(options.rawMessageIri) ?? asUrn(options.rawMessageIri);
+  if (rawMessageIri === undefined) {
+    throw new TypeError(
+      "buildAgenticGraph: rawMessageIri must be a safe absolute http(s) or urn: IRI",
+    );
+  }
+  const raw = namedNode(rawMessageIri);
 
   // --- raw-message anchor ---
   store.addQuad(raw, namedNode(RDF_TYPE), namedNode(PROV_ENTITY));
@@ -120,7 +133,7 @@ export async function buildAgenticGraph(options: AgenticGraphOptions): Promise<A
   for (let i = 0; i < interps.length; i++) {
     const iri = addInterpretation(store, interps[i] as Interpretation, i + 1, {
       docIri: options.docIri,
-      rawMessageIri: options.rawMessageIri,
+      rawMessageIri,
       ...(options.interpretingAgentWebId !== undefined
         ? { interpretingAgentWebId: options.interpretingAgentWebId }
         : {}),

@@ -574,23 +574,58 @@ function parseAddressList(value: string | undefined): EmailAddress[] {
   return out;
 }
 
-/** Split on commas that are not inside a `"…"` quote or a `<…>` angle-addr. */
+/**
+ * Split on commas/semicolons that are not inside a `"…"` quoted-string, a `<…>`
+ * angle-addr, or a `(…)` RFC 5322 comment (which may nest and carry quoted-pairs).
+ * Comment-awareness matters: a `,`/`;` smuggled into a comment must NOT split a
+ * valid header like `Alice (one, two) <a@b.com>` into bogus recipients.
+ */
 function splitTopLevelCommas(value: string): string[] {
   const parts: string[] = [];
   let buf = "";
   let inQuote = false;
   let inAngle = false;
+  let commentDepth = 0;
   for (let i = 0; i < value.length && parts.length < MAX_ADDRESSES + 1; i++) {
     const c = value[i] as string;
-    if (c === '"' && !inAngle) inQuote = !inQuote;
-    else if (c === "<" && !inQuote) inAngle = true;
-    else if (c === ">" && !inQuote) inAngle = false;
-    else if ((c === "," || c === ";") && !inQuote && !inAngle) {
+    if (inQuote) {
+      // Inside a quoted-string: `\` escapes the next char; `"` ends the quote.
+      if (c === "\\") {
+        buf += c;
+        const next = value[i + 1];
+        if (next !== undefined) {
+          buf += next;
+          i++;
+        }
+        continue;
+      }
+      if (c === '"') inQuote = false;
+    } else if (commentDepth > 0) {
+      // Inside a comment: `\` escapes; nested `(`/`)` adjust depth.
+      if (c === "\\") {
+        buf += c;
+        const next = value[i + 1];
+        if (next !== undefined) {
+          buf += next;
+          i++;
+        }
+        continue;
+      }
+      if (c === "(") commentDepth++;
+      else if (c === ")") commentDepth--;
+    } else if (c === '"' && !inAngle) {
+      inQuote = true;
+    } else if (c === "(" && !inAngle) {
+      commentDepth++;
+    } else if (c === "<") {
+      inAngle = true;
+    } else if (c === ">") {
+      inAngle = false;
+    } else if ((c === "," || c === ";") && !inAngle) {
       parts.push(buf);
       buf = "";
       continue;
     }
-    // Drop a group-label `:` at top level by ignoring everything up to it handled below.
     buf += c;
   }
   if (buf.trim() !== "") parts.push(buf);
@@ -601,20 +636,24 @@ function splitTopLevelCommas(value: string): string[] {
 function parseOneAddress(token: string): EmailAddress | undefined {
   let t = token.trim();
   if (t === "") return undefined;
-  // Strip a leading group label `phrase:` (but NOT the `:` inside a `<...>`).
-  const angleOpen = t.indexOf("<");
-  const colon = t.indexOf(":");
-  if (colon !== -1 && (angleOpen === -1 || colon < angleOpen) && !t.slice(0, colon).includes('"')) {
-    // Heuristic: a top-level `:` before any `<` is a group label; drop it.
-    t = t.slice(colon + 1).trim();
-  }
+  // Strip a leading group label `phrase:` — a TOP-LEVEL `:` (not inside a quoted
+  // string or a comment) that precedes any top-level angle-addr. The scan is
+  // quote/comment-aware: a naive `indexOf(":")` would treat a `:` smuggled into a
+  // comment (`Alice (note: <victim@bank.com>) <attacker@evil>`) as a group label,
+  // drop the text up to it, and re-expose the identity spoof onto `victim@bank.com`.
+  const label = findGroupLabelColon(t);
+  if (label !== -1) t = t.slice(label + 1).trim();
   let address: string;
   let displayName: string | undefined;
-  const lt = t.indexOf("<");
-  const gt = t.indexOf(">", lt + 1);
-  if (lt !== -1 && gt !== -1) {
-    address = t.slice(lt + 1, gt).trim();
-    const phrase = t.slice(0, lt).trim();
+  // Locate the angle-addr while SKIPPING any `<`/`>` inside a quoted-string
+  // display-name (RFC 5322 §3.4 — a quoted-string is opaque). A naive
+  // `indexOf("<")` here is an identity-SPOOF: `"Alice <victim@bank.com>"
+  // <attacker@evil>` would be read as `victim@bank.com` (from inside the quotes)
+  // instead of the real angle-addr `attacker@evil`.
+  const angle = findAngleAddr(t);
+  if (angle !== undefined) {
+    address = t.slice(angle.lt + 1, angle.gt).trim();
+    const phrase = t.slice(0, angle.lt).trim();
     if (phrase !== "") displayName = cleanPhrase(phrase);
   } else {
     address = t.trim();
@@ -625,6 +664,96 @@ function parseOneAddress(token: string): EmailAddress | undefined {
     return { address: "", displayName };
   }
   return displayName === undefined ? { address } : { address, displayName };
+}
+
+/**
+ * Return the index of a leading group-label `:` — the first TOP-LEVEL `:` (outside
+ * any `"…"` quoted-string or `(…)` comment) that appears before the first top-level
+ * angle-addr `<` — or `-1` if there is none. Sharing the opaque-region scan with
+ * {@link findAngleAddr} is load-bearing: a `:` inside a comment/quote is NOT a group
+ * label, so it can never be used to slice off the phrase and re-expose the spoof.
+ */
+function findGroupLabelColon(t: string): number {
+  let inQuote = false;
+  let commentDepth = 0;
+  for (let i = 0; i < t.length; i++) {
+    const c = t[i] as string;
+    if (inQuote) {
+      if (c === "\\") {
+        i++;
+        continue;
+      }
+      if (c === '"') inQuote = false;
+      continue;
+    }
+    if (commentDepth > 0) {
+      if (c === "\\") {
+        i++;
+        continue;
+      }
+      if (c === "(") commentDepth++;
+      else if (c === ")") commentDepth--;
+      continue;
+    }
+    if (c === '"') inQuote = true;
+    else if (c === "(") commentDepth++;
+    else if (c === "<")
+      return -1; // reached the angle-addr with no top-level colon
+    else if (c === ":") return i; // a top-level colon before the angle-addr = group label
+  }
+  return -1;
+}
+
+/**
+ * Locate the angle-addr `<addr-spec>` in an address token, treating BOTH a
+ * quoted-string display-name (`"…"`, RFC 5322 §3.4) AND an RFC 5322 comment
+ * (`(…)`, §3.2.2, which may nest and carry quoted-pairs) as OPAQUE — a `<`/`>`
+ * inside either is NOT the angle-addr (Python `email.utils.parseaddr` semantics:
+ * the display-name is everything before the real angle-addr). A `\` inside a
+ * quoted-string or comment escapes the next char (a quoted-pair). Returns the
+ * indices of the first TOP-LEVEL `<` and its following `>`, or `undefined` when
+ * there is no top-level angle-addr.
+ *
+ * Both skips are load-bearing: a smuggled display-name (`"Alice
+ * <victim@bank.com>" <attacker@evil>`) OR a smuggled comment
+ * (`Alice (ignored <victim@bank.com>) <attacker@evil>`) would otherwise spoof the
+ * sender identity onto `victim@bank.com`.
+ */
+function findAngleAddr(t: string): { lt: number; gt: number } | undefined {
+  let inQuote = false;
+  let commentDepth = 0;
+  let lt = -1;
+  for (let i = 0; i < t.length; i++) {
+    const c = t[i] as string;
+    if (lt !== -1) {
+      // Committed to the angle-addr opened at `lt`; its next `>` closes it.
+      if (c === ">") return { lt, gt: i };
+      continue;
+    }
+    if (inQuote) {
+      // Inside a quoted-string: `\` escapes the next char; `"` ends the quote.
+      if (c === "\\") {
+        i++;
+        continue;
+      }
+      if (c === '"') inQuote = false;
+      continue;
+    }
+    if (commentDepth > 0) {
+      // Inside a comment: `\` escapes; nested `(`/`)` adjust depth.
+      if (c === "\\") {
+        i++;
+        continue;
+      }
+      if (c === "(") commentDepth++;
+      else if (c === ")") commentDepth--;
+      continue;
+    }
+    if (c === '"') inQuote = true;
+    else if (c === "(") commentDepth++;
+    else if (c === "<") lt = i;
+  }
+  return undefined;
 }
 
 /** Decode + dequote + sanitise a display phrase. */

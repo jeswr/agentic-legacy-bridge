@@ -306,4 +306,113 @@ describe("parseEmail — address parsing", () => {
     // control-stripped and whitespace-removed
     expect(m.from?.address).not.toMatch(/\s/);
   });
+
+  // --- identity-attribution SPOOF regression (angle-addr inside a quoted phrase) ---
+  it("does NOT take an address from inside a quoted display-name (From spoof)", () => {
+    // The angle-addr `<victim@bank.com>` is smuggled INSIDE the quoted phrase; the
+    // REAL angle-addr is `<attacker@evil.example>`. A naive indexOf("<") would mint
+    // the victim's mailbox as the sender identity — a third-party spoof.
+    const m = parseEmail(msg('From: "Alice <victim@bank.com>" <attacker@evil.example>', "b"));
+    expect(m.from?.address).toBe("attacker@evil.example");
+    expect(m.from?.address).not.toBe("victim@bank.com");
+    expect(m.from?.displayName).toBe("Alice <victim@bank.com>");
+  });
+
+  it("resists the same quoted-phrase smuggle in Reply-To / To / Cc", () => {
+    const m = parseEmail(
+      msg(
+        [
+          'From: "Alice <victim@bank.com>" <attacker@evil.example>',
+          'Reply-To: "Bob <victim2@bank.com>" <reply@evil.example>',
+          'To: "Carol <victim3@bank.com>" <to@evil.example>',
+          'Cc: "Dave <victim4@bank.com>" <cc@evil.example>',
+        ].join(CRLF),
+        "b",
+      ),
+    );
+    expect(m.replyTo[0]?.address).toBe("reply@evil.example");
+    expect(m.to[0]?.address).toBe("to@evil.example");
+    expect(m.cc[0]?.address).toBe("cc@evil.example");
+    for (const a of [m.replyTo[0], m.to[0], m.cc[0]]) {
+      expect(a?.address).not.toMatch(/victim/);
+    }
+  });
+
+  it("treats a `>` inside a quoted display-name as opaque", () => {
+    const m = parseEmail(msg('From: "weird > name" <x@y.com>', "b"));
+    expect(m.from?.address).toBe("x@y.com");
+    expect(m.from?.displayName).toBe("weird > name");
+  });
+
+  it("honours an escaped quote inside the display-name (quoted-pair)", () => {
+    // The `\"` are quoted-pairs and do NOT end the string, so `<evil@x.com>` stays
+    // inside the phrase; the real angle-addr is `<real@c.com>`.
+    const m = parseEmail(msg('From: "a\\"<evil@x.com>\\" b" <real@c.com>', "b"));
+    expect(m.from?.address).toBe("real@c.com");
+    expect(m.from?.address).not.toBe("evil@x.com");
+  });
+
+  it("does NOT take an address from inside an RFC 5322 comment (From spoof)", () => {
+    // The angle-addr is smuggled into a `(…)` comment; the real one is
+    // `<attacker@evil.example>`. A comment-blind scan would mint `victim@bank.com`.
+    const m = parseEmail(
+      msg("From: Alice (ignored <victim@bank.com>) <attacker@evil.example>", "b"),
+    );
+    expect(m.from?.address).toBe("attacker@evil.example");
+    expect(m.from?.address).not.toBe("victim@bank.com");
+  });
+
+  it("resists the comment smuggle in Reply-To / To / Cc (nested + escaped)", () => {
+    const m = parseEmail(
+      msg(
+        [
+          "From: Alice (a <victim@bank.com>) <attacker@evil.example>",
+          "Reply-To: Bob (b (nested <victim2@bank.com>)) <reply@evil.example>",
+          "To: Carol (c <victim3@bank.com>) <to@evil.example>",
+          "Cc: Dave (esc \\) <victim4@bank.com>) <cc@evil.example>",
+        ].join(CRLF),
+        "b",
+      ),
+    );
+    expect(m.from?.address).toBe("attacker@evil.example");
+    expect(m.replyTo[0]?.address).toBe("reply@evil.example");
+    expect(m.to[0]?.address).toBe("to@evil.example");
+    expect(m.cc[0]?.address).toBe("cc@evil.example");
+    for (const a of [m.from, m.replyTo[0], m.to[0], m.cc[0]]) {
+      expect(a?.address).not.toMatch(/victim/);
+    }
+  });
+
+  it("does NOT treat a colon inside a comment as a group label (From/To spoof)", () => {
+    // A `:` smuggled into a comment must not slice off the phrase (which would let
+    // `<victim@bank.com>` become the angle-addr). The real address wins.
+    const m = parseEmail(
+      msg(
+        [
+          "From: Alice (note: <victim@bank.com>) <attacker@evil.example>",
+          "To: Carol (re: <victim2@bank.com>) <to@evil.example>",
+        ].join(CRLF),
+        "b",
+      ),
+    );
+    expect(m.from?.address).toBe("attacker@evil.example");
+    expect(m.to[0]?.address).toBe("to@evil.example");
+    expect(m.from?.address).not.toBe("victim@bank.com");
+    expect(m.to[0]?.address).not.toBe("victim2@bank.com");
+  });
+
+  it("does NOT split on a comma/semicolon inside a comment (no bogus recipients)", () => {
+    const m = parseEmail(msg("To: Alice (one, two; three) <a@b.com>", "b"));
+    expect(m.to).toHaveLength(1);
+    expect(m.to[0]?.address).toBe("a@b.com");
+  });
+
+  it("still honours a legitimate top-level group label + quoted colon", () => {
+    // Real group label is stripped; a `:` inside quotes is NOT a label.
+    const grp = parseEmail(msg("To: Team: a@b.com, c@d.com;", "b"));
+    expect(grp.to.map((x) => x.address)).toEqual(["a@b.com", "c@d.com"]);
+    const quoted = parseEmail(msg('From: "Dept: Sales" <s@x.com>', "b"));
+    expect(quoted.from?.address).toBe("s@x.com");
+    expect(quoted.from?.displayName).toBe("Dept: Sales");
+  });
 });

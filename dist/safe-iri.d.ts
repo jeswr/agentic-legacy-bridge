@@ -70,6 +70,16 @@ export declare function safeMailtoIri(address: unknown): string | undefined;
  */
 export declare function base64Url(input: string): string;
 /**
+ * Injection-safe passthrough for the INTERNAL anchor IRIs this package mints — an
+ * absolute `urn:agentic:*` (and similar `urn:<nid>:<nss>`) carrying no
+ * IRIREF-forbidden char. Unlike {@link mintUrn} it does not re-encode; it VALIDATES
+ * an already-minted urn (`safeHttpIri(x) ?? asUrn(x)` is the pair used at every site
+ * where an anchor IRI — http(s) OR our own urn — becomes a `namedNode()`). Returns
+ * the value unchanged when it matches the tight `urn:` shape, else `undefined`
+ * (fail-closed — a `urn:` carrying `>`/space/etc. is rejected, never injected).
+ */
+export declare function asUrn(value: unknown): string | undefined;
+/**
  * Mint a deterministic, injection-safe `urn:agentic:<kind>:<b64url(key)>` IRI. All
  * of `kind` and the encoded `key` land in the `[A-Za-z0-9_-]`/fixed-literal space,
  * so the result carries no IRIREF-forbidden char by construction. Used for the

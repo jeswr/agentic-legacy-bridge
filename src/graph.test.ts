@@ -60,4 +60,30 @@ describe("buildAgenticGraph", () => {
     });
     expect(() => new Parser().parse(turtle)).not.toThrow();
   });
+
+  it("fails closed on a rawMessageIri carrying an IRIREF-breakout char (no injection)", async () => {
+    const message = parse("hi");
+    // A rawMessageIri smuggling `>` + extra triples would break out of the Turtle
+    // `<...>` if it reached `namedNode()` unvalidated (it could inject into a `.acl`).
+    await expect(
+      buildAgenticGraph({
+        message,
+        channel: "email",
+        docIri: DOC,
+        rawMessageIri: "urn:agentic:raw:x> <urn:evil:s> <urn:evil:p> <urn:evil:o> .",
+      }),
+    ).rejects.toThrow(TypeError);
+  });
+
+  it("accepts a valid http(s) rawMessageIri (defense-in-depth passthrough)", async () => {
+    const message = parse("hi");
+    const { turtle } = await buildAgenticGraph({
+      message,
+      channel: "email",
+      docIri: DOC,
+      rawMessageIri: "https://pod.example/inbox/m.eml#raw",
+    });
+    expect(turtle).toContain("https://pod.example/inbox/m.eml#raw");
+    expect(() => new Parser().parse(turtle)).not.toThrow();
+  });
 });

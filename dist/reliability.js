@@ -14,7 +14,7 @@
  * a security-/value-bearing datum is NEVER `auto` — it always needs a human confirm.
  */
 import { DataFactory } from "n3";
-import { safeHttpIri, sanitizeText } from "./safe-iri.js";
+import { asUrn, safeHttpIri, sanitizeText } from "./safe-iri.js";
 import { AGENTIC_ASSERTS_OBJECT, AGENTIC_ASSERTS_OBJECT_IRI, AGENTIC_ASSERTS_PREDICATE, AGENTIC_ASSERTS_SUBJECT, AGENTIC_CALIBRATED, AGENTIC_CALIBRATION, AGENTIC_CONFIDENCE, AGENTIC_DETERMINISTIC, AGENTIC_HUMAN_CONFIRMED, AGENTIC_INTERPRETATION, AGENTIC_INTERPRETATION_METHOD, AGENTIC_LLM_INTERPRETATION, AGENTIC_SECURITY_BEARING, AGENTIC_SELF_REPORTED, AGENTIC_VERIFIED, DCT, PROV_ACTIVITY, PROV_ASSOCIATION, PROV_ENDED_AT_TIME, PROV_ENTITY, PROV_HAD_PLAN, PROV_QUALIFIED_ASSOCIATION, PROV_WAS_ASSOCIATED_WITH, PROV_WAS_DERIVED_FROM, PROV_WAS_GENERATED_BY, RDF_TYPE, XSD, } from "./vocab.js";
 const { namedNode, literal, blankNode } = DataFactory;
 const METHOD_IRI = {
@@ -80,8 +80,13 @@ export function addInterpretation(store, interp, index, ctx) {
     objectAdd();
     store.addQuad(interpNode, namedNode(PROV_WAS_DERIVED_FROM), namedNode(rawMessage));
     store.addQuad(interpNode, namedNode(AGENTIC_CONFIDENCE), literal(formatDecimal(clampConfidence(interp.confidence)), namedNode(`${XSD}decimal`)));
-    store.addQuad(interpNode, namedNode(AGENTIC_INTERPRETATION_METHOD), namedNode(METHOD_IRI[interp.method]));
-    store.addQuad(interpNode, namedNode(AGENTIC_CALIBRATION), namedNode(CALIBRATION_IRI[interp.calibration]));
+    // `method`/`calibration` are UNTRUSTED (an injected interpreter could emit an
+    // out-of-enum string despite the type). An unknown value must NOT reach
+    // `namedNode(undefined)`; fail closed to the LEAST-trusting member of each enum
+    // (an LLM interpretation / a self-reported score) so a malformed datum can never
+    // masquerade as a higher-trust one.
+    store.addQuad(interpNode, namedNode(AGENTIC_INTERPRETATION_METHOD), namedNode(METHOD_IRI[interp.method] ?? AGENTIC_LLM_INTERPRETATION));
+    store.addQuad(interpNode, namedNode(AGENTIC_CALIBRATION), namedNode(CALIBRATION_IRI[interp.calibration] ?? AGENTIC_SELF_REPORTED));
     if (interp.securityBearing === true) {
         store.addQuad(interpNode, namedNode(AGENTIC_SECURITY_BEARING), literal("true", namedNode(`${XSD}boolean`)));
     }
@@ -109,14 +114,6 @@ export function addInterpretation(store, interp, index, ctx) {
     const ended = isoOrNow(ctx.endedAtTime);
     store.addQuad(activity, namedNode(PROV_ENDED_AT_TIME), literal(ended, namedNode(`${XSD}dateTime`)));
     return interpIri;
-}
-/** A permissive urn:/absolute-IRI passthrough for the internal anchor IRIs we mint. */
-function asUrn(value) {
-    // We only mint `urn:agentic:*` anchors ourselves (safe by construction). Accept an
-    // absolute `urn:` with no IRIREF-forbidden char; reject anything else.
-    if (/^urn:[a-z0-9][a-z0-9-]{0,31}:[A-Za-z0-9._~%:-]+$/.test(value))
-        return value;
-    return undefined;
 }
 /** Format a [0,1] number as a compact xsd:decimal string (always has a decimal point). */
 function formatDecimal(n) {
