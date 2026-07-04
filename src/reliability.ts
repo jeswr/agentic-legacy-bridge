@@ -29,6 +29,7 @@ import {
   AGENTIC_INTERPRETATION,
   AGENTIC_INTERPRETATION_METHOD,
   AGENTIC_LLM_INTERPRETATION,
+  AGENTIC_MODEL,
   AGENTIC_SECURITY_BEARING,
   AGENTIC_SELF_REPORTED,
   AGENTIC_VERIFIED,
@@ -85,6 +86,19 @@ export interface Interpretation {
   readonly securityBearing?: boolean;
   /** An optional human-readable note (control-stripped when written). */
   readonly note?: string;
+  /**
+   * The opaque model tag when this datum came from a live LLM (the M2.3
+   * `LlmInterpreter`, M2-DESIGN.md §2.3) — written as `agentic:model` on the
+   * interpreting activity so an auditor sees WHICH model produced the datum.
+   * OWNER-CONFIGURED (never read from model output); sanitised + capped on write.
+   */
+  readonly model?: string;
+  /**
+   * The extraction-task id (e.g. `"meeting-times"`) — written as `dct:description`
+   * on the interpreting activity so an auditor can reproduce the exact extraction
+   * (M2-DESIGN.md §2.3). Sanitised + capped on write.
+   */
+  readonly extractionTask?: string;
 }
 
 /** Context for lowering interpretations into RDF quads. */
@@ -220,6 +234,18 @@ export function addInterpretation(
     store.addQuad(activity, namedNode(PROV_QUALIFIED_ASSOCIATION), assoc);
     store.addQuad(assoc, namedNode(RDF_TYPE), namedNode(PROV_ASSOCIATION));
     store.addQuad(assoc, namedNode(PROV_HAD_PLAN), namedNode(mandate));
+  }
+  // LLM provenance (M2.3): the opaque model tag + the extraction-task id on the
+  // activity. Both are owner-config / adapter-assigned (NEVER model output); they
+  // are still sanitised + capped as untrusted-string defence-in-depth, and only
+  // written when non-empty (a deterministic interpretation sets neither).
+  if (interp.model !== undefined) {
+    const model = sanitizeText(interp.model).trim().slice(0, 128);
+    if (model !== "") store.addQuad(activity, namedNode(AGENTIC_MODEL), literal(model));
+  }
+  if (interp.extractionTask !== undefined) {
+    const task = sanitizeText(interp.extractionTask).trim().slice(0, 128);
+    if (task !== "") store.addQuad(activity, namedNode(`${DCT}description`), literal(task));
   }
   const ended = isoOrNow(ctx.endedAtTime);
   store.addQuad(

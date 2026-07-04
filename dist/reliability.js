@@ -15,7 +15,7 @@
  */
 import { DataFactory } from "n3";
 import { asUrn, safeHttpIri, sanitizeText } from "./safe-iri.js";
-import { AGENTIC_ASSERTS_OBJECT, AGENTIC_ASSERTS_OBJECT_IRI, AGENTIC_ASSERTS_PREDICATE, AGENTIC_ASSERTS_SUBJECT, AGENTIC_CALIBRATED, AGENTIC_CALIBRATION, AGENTIC_CONFIDENCE, AGENTIC_DETERMINISTIC, AGENTIC_HUMAN_CONFIRMED, AGENTIC_INTERPRETATION, AGENTIC_INTERPRETATION_METHOD, AGENTIC_LLM_INTERPRETATION, AGENTIC_SECURITY_BEARING, AGENTIC_SELF_REPORTED, AGENTIC_VERIFIED, DCT, PROV_ACTIVITY, PROV_ASSOCIATION, PROV_ENDED_AT_TIME, PROV_ENTITY, PROV_HAD_PLAN, PROV_QUALIFIED_ASSOCIATION, PROV_WAS_ASSOCIATED_WITH, PROV_WAS_DERIVED_FROM, PROV_WAS_GENERATED_BY, RDF_TYPE, XSD, } from "./vocab.js";
+import { AGENTIC_ASSERTS_OBJECT, AGENTIC_ASSERTS_OBJECT_IRI, AGENTIC_ASSERTS_PREDICATE, AGENTIC_ASSERTS_SUBJECT, AGENTIC_CALIBRATED, AGENTIC_CALIBRATION, AGENTIC_CONFIDENCE, AGENTIC_DETERMINISTIC, AGENTIC_HUMAN_CONFIRMED, AGENTIC_INTERPRETATION, AGENTIC_INTERPRETATION_METHOD, AGENTIC_LLM_INTERPRETATION, AGENTIC_MODEL, AGENTIC_SECURITY_BEARING, AGENTIC_SELF_REPORTED, AGENTIC_VERIFIED, DCT, PROV_ACTIVITY, PROV_ASSOCIATION, PROV_ENDED_AT_TIME, PROV_ENTITY, PROV_HAD_PLAN, PROV_QUALIFIED_ASSOCIATION, PROV_WAS_ASSOCIATED_WITH, PROV_WAS_DERIVED_FROM, PROV_WAS_GENERATED_BY, RDF_TYPE, XSD, } from "./vocab.js";
 const { namedNode, literal, blankNode } = DataFactory;
 const METHOD_IRI = {
     Deterministic: AGENTIC_DETERMINISTIC,
@@ -110,6 +110,20 @@ export function addInterpretation(store, interp, index, ctx) {
         store.addQuad(activity, namedNode(PROV_QUALIFIED_ASSOCIATION), assoc);
         store.addQuad(assoc, namedNode(RDF_TYPE), namedNode(PROV_ASSOCIATION));
         store.addQuad(assoc, namedNode(PROV_HAD_PLAN), namedNode(mandate));
+    }
+    // LLM provenance (M2.3): the opaque model tag + the extraction-task id on the
+    // activity. Both are owner-config / adapter-assigned (NEVER model output); they
+    // are still sanitised + capped as untrusted-string defence-in-depth, and only
+    // written when non-empty (a deterministic interpretation sets neither).
+    if (interp.model !== undefined) {
+        const model = sanitizeText(interp.model).trim().slice(0, 128);
+        if (model !== "")
+            store.addQuad(activity, namedNode(AGENTIC_MODEL), literal(model));
+    }
+    if (interp.extractionTask !== undefined) {
+        const task = sanitizeText(interp.extractionTask).trim().slice(0, 128);
+        if (task !== "")
+            store.addQuad(activity, namedNode(`${DCT}description`), literal(task));
     }
     const ended = isoOrNow(ctx.endedAtTime);
     store.addQuad(activity, namedNode(PROV_ENDED_AT_TIME), literal(ended, namedNode(`${XSD}dateTime`)));

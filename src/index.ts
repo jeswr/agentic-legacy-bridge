@@ -62,6 +62,24 @@ export {
   type InterpretContext,
   type Interpreter,
 } from "./interpret.js";
+// --- rung 2: the live-LLM interpreter (M2.3) ---
+export {
+  type AsyncInterpreter,
+  actionItemsTask,
+  DEFAULT_TASKS,
+  type ExtractionTask,
+  type LlmExtractor,
+  LlmInterpreter,
+  type LlmInterpreterOptions,
+  type LlmInterpretResult,
+  meetingTimesTask,
+  replyPolarityTask,
+  scriptedExtractor,
+} from "./interpret-llm.js";
+export {
+  createHttpLlmExtractor,
+  type HttpLlmExtractorOptions,
+} from "./interpret-llm-http.js";
 // --- the channel-neutral message shape (M2.0) ---
 export {
   asBridgeMessage,
