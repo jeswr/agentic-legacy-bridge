@@ -151,6 +151,29 @@ describe("createHttpLlmExtractor — transport hardening", () => {
     await expect(extract(TASK)).rejects.toThrow(/choices|shape|content/);
   });
 
+  it("keeps the timeout armed through the BODY read (a hung body stream still times out)", async () => {
+    // Headers arrive fast, then the body stream hangs — the abort timer must remain
+    // armed until the body is fully consumed, else this would hang forever.
+    const fn = vi.fn((_url: string | URL | Request, init?: RequestInit) => {
+      const stream = new ReadableStream({
+        start(controller) {
+          init?.signal?.addEventListener("abort", () =>
+            controller.error(new Error("aborted body")),
+          );
+          // never enqueue or close → the body hangs until the abort fires
+        },
+      });
+      return Promise.resolve(new Response(stream, { status: 200 }));
+    }) as unknown as typeof globalThis.fetch;
+    const extract = createHttpLlmExtractor({
+      endpoint: ENDPOINT,
+      model: "m",
+      fetch: fn,
+      timeoutMs: 15,
+    });
+    await expect(extract(TASK)).rejects.toThrow();
+  });
+
   it("bounds a hanging request by the timeout (AbortSignal fires)", async () => {
     const hang = vi.fn(
       (_url: string | URL | Request, init?: RequestInit) =>

@@ -101,6 +101,8 @@ export interface AsyncInterpreter {
 // --- caps (a pathological body / model can never blow these) -----------------
 const MAX_SCAN_CHARS = 100_000;
 const MAX_ITEMS = 16;
+/** reply-polarity is one-per-message in practice — its closed schema caps at a few. */
+const MAX_POLARITY_ITEMS = 4;
 const MAX_SPAN_CHARS = 400;
 const MIN_SPAN_NORMALIZED = 3;
 const MAX_NAME_CHARS = 200;
@@ -199,6 +201,7 @@ function own(obj: object, key: string): unknown {
 function asItemsArray(
   raw: unknown,
   reason: string,
+  maxItems: number,
 ): { ok: true; items: unknown[] } | { ok: false; reason: string } {
   let value: unknown = raw;
   if (typeof value === "string") {
@@ -217,8 +220,10 @@ function asItemsArray(
   }
   const items = own(value, "items");
   if (!Array.isArray(items)) return { ok: false, reason: `${reason}: "items" is not an array` };
-  if (items.length > MAX_ITEMS)
-    return { ok: false, reason: `${reason}: over the ${MAX_ITEMS}-item cap` };
+  // Enforce the task's OWN closed-schema `maxItems` (not a shared cap) so an output
+  // that violates the declared schema is a whole-task drop, never accepted.
+  if (items.length > maxItems)
+    return { ok: false, reason: `${reason}: over the ${maxItems}-item cap` };
   return { ok: true, items };
 }
 
@@ -312,7 +317,7 @@ export const meetingTimesTask: ExtractionTask<MeetingItem> = {
     },
   },
   validate(raw): ValidationResult<MeetingItem> {
-    const arr = asItemsArray(raw, "meeting-times");
+    const arr = asItemsArray(raw, "meeting-times", MAX_ITEMS);
     if (!arr.ok) return arr;
     const items: MeetingItem[] = [];
     for (const it of arr.items) {
@@ -401,7 +406,7 @@ export const actionItemsTask: ExtractionTask<ActionItem> = {
     },
   },
   validate(raw): ValidationResult<ActionItem> {
-    const arr = asItemsArray(raw, "action-items");
+    const arr = asItemsArray(raw, "action-items", MAX_ITEMS);
     if (!arr.ok) return arr;
     const items: ActionItem[] = [];
     for (const it of arr.items) {
@@ -451,7 +456,7 @@ export const replyPolarityTask: ExtractionTask<PolarityItem> = {
     properties: {
       items: {
         type: "array",
-        maxItems: 4,
+        maxItems: MAX_POLARITY_ITEMS,
         items: {
           type: "object",
           additionalProperties: false,
@@ -466,7 +471,7 @@ export const replyPolarityTask: ExtractionTask<PolarityItem> = {
     },
   },
   validate(raw): ValidationResult<PolarityItem> {
-    const arr = asItemsArray(raw, "reply-polarity");
+    const arr = asItemsArray(raw, "reply-polarity", MAX_POLARITY_ITEMS);
     if (!arr.ok) return arr;
     const items: PolarityItem[] = [];
     for (const it of arr.items) {
@@ -605,7 +610,9 @@ export class LlmInterpreter implements AsyncInterpreter {
   ): Promise<LlmInterpretResult> {
     const bridge = asBridgeMessage(message);
     const now = ctx.now ?? new Date();
-    const text = clip(unquote(bridge.textBody));
+    // Clip FIRST so `unquote` never splits/filters an unbounded body in memory (the
+    // MAX_SCAN_CHARS scan cap must bound the work, not just the final string).
+    const text = unquote(clip(bridge.textBody));
     const warnings: string[] = [];
 
     // Each task is INDEPENDENT + fail-closed: one task failing never rejects the
@@ -667,17 +674,28 @@ export class LlmInterpreter implements AsyncInterpreter {
       return [];
     }
     const denom = runs.length;
-    const first = runs[0] as unknown[];
+    // Aggregate agreement over ALL valid runs (not just the first): count the DISTINCT
+    // runs each signature appears in, keeping the FIRST item seen as the representative.
+    // A signature present in enough LATER runs still qualifies even if run 0 missed it.
+    const runCount = new Map<string, number>();
+    const representative = new Map<string, unknown>();
+    for (const run of runs) {
+      const seenInRun = new Set<string>();
+      for (const item of run) {
+        const sig = task.signature(item);
+        if (!representative.has(sig)) representative.set(sig, item);
+        if (!seenInRun.has(sig)) {
+          seenInRun.add(sig);
+          runCount.set(sig, (runCount.get(sig) ?? 0) + 1);
+        }
+      }
+    }
     const kept: unknown[] = [];
     const agreement = new Map<unknown, number>();
-    for (const item of first) {
-      const sig = task.signature(item);
-      let matching = 0;
-      for (const run of runs) {
-        if (run.some((other) => task.signature(other) === sig)) matching++;
-      }
-      const ratio = matching / denom;
+    for (const [sig, count] of runCount) {
+      const ratio = count / denom;
       if (ratio >= this.kThreshold) {
+        const item = representative.get(sig);
         kept.push(item);
         agreement.set(item, ratio);
       }

@@ -226,6 +226,17 @@ describe("LlmInterpreter — fail-closed structural validation (reject, never re
     expect(r.warnings.some((w) => w.includes("out-of-enum"))).toBe(true);
   });
 
+  it("enforces the task's OWN closed-schema item cap (reply-polarity maxItems 4)", async () => {
+    const items = Array.from({ length: 5 }, () => ({
+      polarity: "neutral",
+      confidence: 0.6,
+      sourceSpan: "hi",
+    }));
+    const r = await detailed({ "reply-polarity": { items } }, "hi there");
+    expect(r.interpretations).toEqual([]);
+    expect(r.warnings.some((w) => w.includes("4-item cap"))).toBe(true);
+  });
+
   it("drops an unexpected top-level key (never partially salvaged)", async () => {
     const r = await detailed({
       "meeting-times": {
@@ -481,6 +492,31 @@ describe("LlmInterpreter — opt-in k-sample agreement (§2.3 rung c)", () => {
     expect(starts).not.toContain("2026-07-09T14:00:00.000Z");
     const a = out.find((i) => i.predicate === SCHEMA_START_TIME);
     expect(a?.calibration).toBe("Calibrated");
+  });
+
+  it("aggregates agreement across ALL runs (an item missing from run 0 still qualifies)", async () => {
+    const isoB = "2026-07-09T14:00:00Z";
+    const body = `options: ${ISO_A} or ${isoB}`;
+    let call = 0;
+    const sampler: LlmExtractor = async ({ task }) => {
+      if (task !== "meeting-times") return { items: [] };
+      call++;
+      // A is MISSING from run 0 but present in runs 1+2 (2/3 ≥ 0.66 → kept).
+      // B is only in run 0 (1/3 → dropped).
+      return call === 1
+        ? { items: [{ startTime: isoB, confidence: 0.8, sourceSpan: isoB }] }
+        : { items: [{ startTime: ISO_A, confidence: 0.8, sourceSpan: ISO_A }] };
+    };
+    const out = await new LlmInterpreter({
+      extractor: sampler,
+      kSamples: 3,
+      kAgreementThreshold: 0.66,
+    }).interpret(msg(body), ctx);
+    const starts = out
+      .filter((i) => i.predicate === SCHEMA_START_TIME)
+      .map((i) => (i.object as { value: string }).value);
+    expect(starts).toContain(ISO_A_CANON);
+    expect(starts).not.toContain("2026-07-09T14:00:00.000Z");
   });
 
   it("the span floor is NOT bypassable by k-sample agreement", async () => {

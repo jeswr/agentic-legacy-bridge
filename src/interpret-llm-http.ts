@@ -84,8 +84,13 @@ function assertEndpoint(endpoint: string, allowLocal: boolean): URL {
 async function readBounded(response: Response, maxBytes: number): Promise<string> {
   const body = response.body;
   if (body === null || typeof body.getReader !== "function") {
+    // The guarded default fetch always exposes a body STREAM (so this fallback is only
+    // reached under an injected fetch). Enforce the cap on ENCODED bytes, not UTF-16
+    // code units, once read.
     const text = await response.text();
-    if (text.length > maxBytes) throw new Error("model response exceeded the byte cap");
+    if (new TextEncoder().encode(text).byteLength > maxBytes) {
+      throw new Error("model response exceeded the byte cap");
+    }
     return text;
   }
   const reader = body.getReader();
@@ -183,41 +188,48 @@ export function createHttpLlmExtractor(options: HttpLlmExtractorOptions): LlmExt
     });
 
     const controller = new AbortController();
+    // The timeout MUST stay armed through the whole exchange — a server can send
+    // headers fast then hang the BODY stream, so clearing the timer once `fetch`
+    // resolves would let an unbounded body read defeat the timeout. We clear it only
+    // after the body is fully consumed + parsed (the outer `finally`); an abort while
+    // reading errors the body stream, which `readBounded` propagates.
     const timer = setTimeout(() => controller.abort(), timeoutMs);
-    let response: Response;
     try {
-      response = await doFetch(url.href, {
-        method: "POST",
-        headers,
-        body: requestBody,
-        redirect: "manual",
-        signal: controller.signal,
-      });
-    } catch (err) {
-      // Never surface the request body or the key in the error.
-      throw new Error(
-        `model request failed: ${err instanceof Error ? err.message : "network error"}`,
-      );
+      let response: Response;
+      try {
+        response = await doFetch(url.href, {
+          method: "POST",
+          headers,
+          body: requestBody,
+          redirect: "manual",
+          signal: controller.signal,
+        });
+      } catch (err) {
+        // Never surface the request body or the key in the error.
+        throw new Error(
+          `model request failed: ${err instanceof Error ? err.message : "network error"}`,
+        );
+      }
+
+      // Redirect-refusal: a followed redirect (or a bare 3xx) could leak the Authorization
+      // header cross-origin. Refuse either.
+      if (response.redirected || (response.status >= 300 && response.status < 400)) {
+        throw new Error("model endpoint attempted a redirect — refused");
+      }
+      if (!response.ok) throw new Error(`model endpoint returned HTTP ${response.status}`);
+
+      const bodyText = await readBounded(response, maxResponseBytes);
+      let payload: unknown;
+      try {
+        payload = JSON.parse(bodyText);
+      } catch {
+        throw new Error("model response was not valid JSON");
+      }
+      // Return the assistant's content STRING — the adapter JSON-parses + validates it
+      // fail-closed (one parse home). The content is fully untrusted from here.
+      return extractContent(payload);
     } finally {
       clearTimeout(timer);
     }
-
-    // Redirect-refusal: a followed redirect (or a bare 3xx) could leak the Authorization
-    // header cross-origin. Refuse either.
-    if (response.redirected || (response.status >= 300 && response.status < 400)) {
-      throw new Error("model endpoint attempted a redirect — refused");
-    }
-    if (!response.ok) throw new Error(`model endpoint returned HTTP ${response.status}`);
-
-    const bodyText = await readBounded(response, maxResponseBytes);
-    let payload: unknown;
-    try {
-      payload = JSON.parse(bodyText);
-    } catch {
-      throw new Error("model response was not valid JSON");
-    }
-    // Return the assistant's content STRING — the adapter JSON-parses + validates it
-    // fail-closed (one parse home). The content is fully untrusted from here.
-    return extractContent(payload);
   };
 }
