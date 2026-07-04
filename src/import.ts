@@ -128,13 +128,22 @@ async function put(
  * count summary. See the module doc for the write layout + fail-closed posture.
  *
  * @throws if `container` is not a safe container IRI, `writeAcl` is set without an
- *   `ownerWebId`, or any pod write fails (redirect / non-2xx).
+ *   `ownerWebId`, the adapter does not implement the M2.0 `parse` method, or any
+ *   pod write fails (redirect / non-2xx).
  */
 export async function importInbound(options: ImportInboundOptions): Promise<ImportInboundResult> {
   const container = canonicalContainer(options.container);
   if (container === undefined) {
     throw new Error(
       "container must be a safe http(s) container IRI ending in '/' with no query or fragment.",
+    );
+  }
+  // Fail FAST (before any pod write) on a pre-M2.0 adapter shape, with a targeted
+  // error — a stale JS consumer must not fail mid-batch with "parse is not a function".
+  if (typeof options.adapter.parse !== "function") {
+    throw new Error(
+      "adapter must implement parse(item) -> BridgeMessage (the M2.0 ChannelAdapter seam; " +
+        "for email, use parseEmailInbound / InMemoryChannelAdapter's default).",
     );
   }
   const writeAcl = options.writeAcl ?? true;

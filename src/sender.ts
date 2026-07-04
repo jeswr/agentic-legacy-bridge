@@ -178,9 +178,15 @@ export function addSenderPerson(
     }
   }
 
-  // The CLAIMED (unverified) transport-auth domain (email DKIM) — a low-trust signal only.
+  // The CLAIMED (unverified) transport-auth domain (email DKIM) — a low-trust signal
+  // only. `BridgeMessage` is a public type, so the value may come from an arbitrary
+  // adapter, not just the hardened email parser: control-strip + cap like every
+  // other untrusted sender literal (253 = the DNS name length ceiling).
   if (m.dkimDomainClaim !== undefined) {
-    store.addQuad(person, namedNode(AGENTIC_DKIM_DOMAIN_CLAIM), literal(m.dkimDomainClaim));
+    const claim = sanitizeText(m.dkimDomainClaim).trim().slice(0, 253);
+    if (claim !== "") {
+      store.addQuad(person, namedNode(AGENTIC_DKIM_DOMAIN_CLAIM), literal(claim));
+    }
   }
 
   // Candidate WebIDs: hints, never verified identity. Deduped + injection-filtered.
@@ -193,14 +199,29 @@ export function addSenderPerson(
   }
 
   // Candidate person-node edges: cross-channel HINTS, never merges. Fail-closed —
-  // only this package's urn:agentic:… shape or a safe http(s) IRI survives.
+  // only this package's `urn:agentic:person:…` namespace (not just any urn:) or a
+  // safe http(s) IRI survives.
   const seenPersons = new Set<string>();
   for (const raw of options.candidatePersonIris ?? []) {
-    const safe = asUrn(raw) ?? safeHttpIri(raw);
+    const safe = asCandidatePersonIri(raw);
     if (safe === undefined || safe === personIri || seenPersons.has(safe)) continue;
     seenPersons.add(safe);
     store.addQuad(person, namedNode(AGENTIC_CANDIDATE_PERSON), namedNode(safe));
   }
 
   return { personIri };
+}
+
+/**
+ * Validate a candidate-person edge target: this package's `urn:agentic:person:…`
+ * shape (via `asUrn`, which rejects any IRIREF-forbidden char), or a safe http(s)
+ * IRI. Any other urn namespace is rejected — an `urn:evil:…` must never be
+ * persisted as an `agentic:candidatePerson`.
+ */
+function asCandidatePersonIri(raw: string): string | undefined {
+  const urn = asUrn(raw);
+  if (urn !== undefined) {
+    return urn.startsWith("urn:agentic:person:") ? urn : undefined;
+  }
+  return safeHttpIri(raw);
 }

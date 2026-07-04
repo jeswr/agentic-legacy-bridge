@@ -184,7 +184,7 @@ describe("addSenderPerson on a non-email channel", () => {
     const store = new Store();
     const { personIri } = addSenderPerson(
       store,
-      slackBridge({ sender: { handle: "T1:U2", displayName: "Ada[31m" } }),
+      slackBridge({ sender: { handle: "T1:U2\u0007", displayName: "Ada\u001b[31m" } }),
     );
     expect(store.getQuads(personIri, SCHEMA_IDENTIFIER, null, null)[0]?.object.value).toBe("T1:U2");
     expect(store.getQuads(personIri, SCHEMA_NAME, null, null)[0]?.object.value).toBe("Ada[31m");
@@ -199,12 +199,39 @@ describe("addSenderPerson on a non-email channel", () => {
         emailPerson, // dup
         personIriFor(slackBridge()), // self — dropped
         "urn:agentic:person:x> <urn:evil:s> <urn:evil:p> <urn:evil:o>", // injection — dropped
+        "urn:evil:foo", // foreign urn namespace — dropped (only urn:agentic:person:…)
+        "urn:agentic:raw:abc", // wrong agentic kind — dropped
         "not a urn", // dropped
       ],
     });
     const edges = store.getQuads(personIri, AGENTIC_CANDIDATE_PERSON, null, null);
     expect(edges.length).toBe(1);
     expect(edges[0]?.object.value).toBe(emailPerson);
+  });
+
+  it("control-strips + caps an adapter-supplied dkimDomainClaim, dropping an empty one", () => {
+    const store = new Store();
+    const { personIri } = addSenderPerson(
+      store,
+      slackBridge({ dkimDomainClaim: " mail.example.com\u0000\u001b[31m " }),
+    );
+    const claims = store.getQuads(
+      personIri,
+      "https://w3id.org/jeswr/agentic#dkimDomainClaim",
+      null,
+      null,
+    );
+    expect(claims[0]?.object.value).toBe("mail.example.com[31m");
+    expect(claims[0]?.object.value.length).toBeLessThanOrEqual(253);
+
+    const store2 = new Store();
+    const { personIri: p2 } = addSenderPerson(
+      store2,
+      slackBridge({ dkimDomainClaim: "\u0000\u0007 " }),
+    );
+    expect(
+      store2.getQuads(p2, "https://w3id.org/jeswr/agentic#dkimDomainClaim", null, null).length,
+    ).toBe(0);
   });
 });
 
@@ -272,6 +299,24 @@ describe("importInbound through a non-email adapter (the M2.0 spine)", () => {
     });
     expect(result.skipped).toBe(1);
     expect(result.written).toBe(1);
+  });
+
+  it("fails FAST (before any pod write) on a pre-M2.0 adapter without parse", async () => {
+    const puts: Put[] = [];
+    // A stale JS consumer's adapter shape: pullInbound + sendReply only, no parse.
+    const legacyAdapter = {
+      channel: "email",
+      pullInbound: () => Promise.resolve([{ id: "m1", raw: EMAIL }]),
+    } as unknown as InMemoryChannelAdapter;
+    await expect(
+      importInbound({
+        adapter: legacyAdapter,
+        writeFetch: recordingFetch(puts),
+        container: CONTAINER,
+        ownerWebId: OWNER,
+      }),
+    ).rejects.toThrow(/must implement parse/);
+    expect(puts.length).toBe(0); // nothing written — not even the ACL
   });
 
   it("re-throws a NON-parse error from an adapter (never silently loses data)", async () => {

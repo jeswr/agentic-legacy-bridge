@@ -68,7 +68,8 @@ export interface ImportInboundResult {
  * count summary. See the module doc for the write layout + fail-closed posture.
  *
  * @throws if `container` is not a safe container IRI, `writeAcl` is set without an
- *   `ownerWebId`, or any pod write fails (redirect / non-2xx).
+ *   `ownerWebId`, the adapter does not implement the M2.0 `parse` method, or any
+ *   pod write fails (redirect / non-2xx).
  */
 export declare function importInbound(options: ImportInboundOptions): Promise<ImportInboundResult>;
 //# sourceMappingURL=import.d.ts.map
