@@ -41,5 +41,6 @@ export { addInterpretation, type Calibration, clampConfidence, classifyReliabili
 export { type BuildReplyOptions, type BuiltReply, buildReply, htmlSafeJson, type MimePart, type OfferedTime, type ReplySigner, } from "./reply.js";
 export { base64Url, canonicalContainer, isValidEmailAddress, isWithinBase, mintUrn, normalizeEmailAddress, safeHttpIri, safeMailtoIri, safeMediaType, safeTelIri, sanitizeText, } from "./safe-iri.js";
 export { addSenderPerson, personIriFor, type SenderOptions, type SenderResult } from "./sender.js";
+export { SLACK_AGENTIC_METADATA_EVENT_TYPE, SLACK_CHANNEL, SLACK_RAW_MEDIA_TYPE, SlackChannelAdapter, type SlackChannelAdapterOptions, type SlackParseContext, SlackParseError, slackEventToBridgeMessage, } from "./slack.js";
 export * as vocab from "./vocab.js";
 //# sourceMappingURL=index.d.ts.map

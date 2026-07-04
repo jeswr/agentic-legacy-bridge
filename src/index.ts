@@ -124,6 +124,17 @@ export {
   sanitizeText,
 } from "./safe-iri.js";
 export { addSenderPerson, personIriFor, type SenderOptions, type SenderResult } from "./sender.js";
+// --- channels: slack (M2.1) ---
+export {
+  SLACK_AGENTIC_METADATA_EVENT_TYPE,
+  SLACK_CHANNEL,
+  SLACK_RAW_MEDIA_TYPE,
+  SlackChannelAdapter,
+  type SlackChannelAdapterOptions,
+  type SlackParseContext,
+  SlackParseError,
+  slackEventToBridgeMessage,
+} from "./slack.js";
 
 // --- vocabulary ---
 export * as vocab from "./vocab.js";

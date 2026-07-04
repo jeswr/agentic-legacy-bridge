@@ -11,9 +11,10 @@ choices in [`docs/DECISIONS.md`](./docs/DECISIONS.md).
 > **Scope.** Email is the first channel; the entire input is untrusted. The core is fully **hermetic** —
 > the LLM interpreter, the reply signer, and the channel transport are all **injectable seams**, so
 > there is no live-LLM, crypto, or network dependency in the core. **M2.0 (landed)** makes the whole
-> pipeline **channel-neutral** (`BridgeMessage` + `ChannelAdapter.parse`, below); Slack/WhatsApp
-> adapters, a live LLM interpreter, `solid-vc` signing, and an inbound-webhook service are the
-> remaining M2 phases (see *Follow-ups* and [`docs/M2-DESIGN.md`](./docs/M2-DESIGN.md)).
+> pipeline **channel-neutral** (`BridgeMessage` + `ChannelAdapter.parse`, below); **M2.1 (landed)**
+> adds the **Slack** parse transform + adapter (below). A native WhatsApp adapter, a live LLM
+> interpreter, `solid-vc` signing, and an inbound-webhook service are the remaining M2 phases (see
+> *Follow-ups* and [`docs/M2-DESIGN.md`](./docs/M2-DESIGN.md)).
 
 ## The four rungs
 
@@ -117,6 +118,51 @@ identity is only ever a candidate edge (`agentic:candidatePerson`), never a merg
 (strict E.164) is the `safeMailtoIri` sibling for phone-keyed channels. This is the seam the M2.1
 (Slack), M2.2 (WhatsApp Cloud), and M2.3 (LLM interpreter) phases plug into.
 
+## Slack (M2.1)
+
+The Slack channel is a single pure transform + a thin adapter — no new pipeline, persistence, ACL, or
+person-modelling code (it plugs into the M2.0 spine unchanged):
+
+```ts
+import { SlackChannelAdapter, slackEventToBridgeMessage, importInbound } from "@jeswr/agentic-legacy-bridge";
+
+// A Slack Events API `event_callback` (or a `conversations.history` row) → a BridgeMessage.
+const m = slackEventToBridgeMessage(rawSlackEventJson);          // pure, fixture-tested, fail-closed
+
+// Or drive the whole owner-private import through the adapter:
+await importInbound({
+  adapter: new SlackChannelAdapter({ messages: receivedEvents, teamId: "T123" }),
+  writeFetch: myAuthedSolidFetch,
+  container: "https://pod.example/inbox/",
+  ownerWebId: "https://pod.example/profile/card#me",
+});
+```
+
+`slackEventToBridgeMessage` is **hostile-input-hardened**: the whole event is untrusted, so a
+malformed/hostile delivery is **refused** (a `SlackParseError`, which `importInbound` skips — never a
+crash, never a batch abort); `text` is treated as **plain text only** (control-stripped, capped —
+`blocks`/attachments/rich content are **never** flattened to HTML or persisted, the stored-XSS rule);
+the `team`/`user` ids are **shape-validated before minting a URN** (an out-of-shape id → a provisional
+anon person node, never an IRI-injection); every id/ts regex is anchored + linear (no ReDoS). The
+sender is keyed as the channel-scoped `urn:agentic:person:slack:<base64url(team:user)>` and always
+flagged `agentic:identityStatus "unverified"`. Our own structured-reply metadata
+(`metadata.event_type: "agentic_reply"`) is mapped into `BridgeMessage.signals` so a bridge-capable
+Slack counterparty is detected by `detectBridgeCapability`.
+
+**Events API signature-verification contract (for the M2.4 webhook service — not built here).** The
+transform authenticates nothing about the *source*; the deployed receiver must, over the **raw request
+body before any JSON parse**: verify `X-Slack-Signature` = `v0=` + HMAC-SHA256(signing secret,
+`v0:<X-Slack-Request-Timestamp>:<raw-body>`) in constant time, reject a timestamp skew > 300 s, and ack
+within **3 s** (Slack retries ×3 with `X-Slack-Retry-Num`). A deterministic in-pod slug maps a
+retried/replayed delivery to the same URL, but the current `importInbound` write path is a plain `PUT`
+(overwrite) — retry/replay **idempotency is a property the M2.4 service must add** via create-only
+writes (`If-None-Match: *`, treating `412` as already-imported), not something this M2.1 adapter
+provides. The `url_verification` handshake is answered by the service (echo `challenge`) — the
+transform refuses it.
+The live remote read (`conversations.history` backfill / Socket Mode / the bot-token file fetch) MUST
+route through `@jeswr/guarded-fetch`, with the bot token only as a request header. Full contract in the
+`src/slack.ts` module doc.
+
 ## Security posture
 
 - **The entire input is untrusted.** The RFC 5322 / MIME parser is fail-closed + never hangs: every
@@ -141,7 +187,9 @@ identity is only ever a candidate edge (`agentic:candidatePerson`), never a merg
 
 ## Follow-ups (M2+)
 
-- **Channels:** Slack (Events API), the already-working Matrix path (`@jeswr/matrix-chat-to-pod`),
+- **Channels:** Slack parse **landed (M2.1)** — see *Slack* above; the live Slack read/reply
+  (`conversations.history` backfill, Socket Mode, the `chat.postMessage` metadata carrier) + a native
+  WhatsApp Cloud adapter, the already-working Matrix path (`@jeswr/matrix-chat-to-pod`), and
   Gmail / Microsoft Graph adapters — each behind the `ChannelAdapter` seam, guarded-fetch for reads.
 - **Live LLM interpreter:** an adapter over `@jeswr/solid-a2a` `parseIntent({ translate })` implementing
   the same `Interpreter` interface (method `LlmInterpretation`).
