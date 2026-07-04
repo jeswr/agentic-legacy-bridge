@@ -42,10 +42,13 @@
  *     `X-Slack-Retry-Num` / `X-Slack-Retry-Reason`) otherwise. The service must
  *     verify → transform → create-only pod write → 200 quickly; the LLM pass is
  *     decoupled (M2-DESIGN.md §3.6).
- *  3. **Retry / replay dedupe.** `event_id` (and `ts`) are globally unique, so the
- *     deterministic in-pod slug + create-only (`If-None-Match: *`) writes make a
- *     retried/replayed delivery idempotent (it maps to the same URL → 412 → treated
- *     as already-imported). No dedupe table needed (M2-DESIGN.md §3.4).
+ *  3. **Retry / replay dedupe.** `event_id` (and `ts`) are globally unique, so a
+ *     deterministic in-pod slug makes a retried/replayed delivery map to the SAME
+ *     URL. NOTE the M2.1 `importInbound` write path is a plain `PUT` (overwrite) and
+ *     does NOT itself provide idempotency; the M2.4 service must add create-only
+ *     writes (`If-None-Match: *`, treating `412` as already-imported) — the property
+ *     the design assigns to the service, not this adapter (M2-DESIGN.md §3.3/§3.4).
+ *     No dedupe table is then needed.
  *  4. **`url_verification`.** The endpoint-registration handshake
  *     (`{ type: "url_verification", challenge }`) is answered by the service (echo
  *     `challenge`); it is NOT a message, so this transform REFUSES it
@@ -96,6 +99,14 @@ export interface SlackParseContext {
      * out-of-shape value is ignored, never minted into a URN.
      */
     readonly teamId?: string;
+    /**
+     * The conversation (channel/DM/group) id to attribute a message to when the
+     * payload itself does NOT carry one (a `conversations.history` row is fetched
+     * per-conversation, so the channel id lives with the caller, not in the row).
+     * Validated against the Slack conversation-id shape; used to make `messageId` /
+     * `threadId` workspace-unambiguous (a Slack `ts` is only channel-scoped).
+     */
+    readonly channelId?: string;
 }
 /**
  * Parse a raw Slack event (an Events API `event_callback` JSON body, or a
@@ -119,6 +130,13 @@ export interface SlackChannelAdapterOptions {
      * Passed through to {@link slackEventToBridgeMessage} (validated before use).
      */
     readonly teamId?: string;
+    /**
+     * The conversation (channel/DM/group) id for a per-conversation backfill whose
+     * rows omit it — passed through to {@link slackEventToBridgeMessage} to qualify
+     * `messageId`/`threadId` (validated before use). An event that carries its own
+     * `channel` overrides this.
+     */
+    readonly channelId?: string;
     /**
      * Raw Slack events already received (a webhook delivery batch, a backfill page).
      * The default {@link pullInbound} returns these verbatim. Each is parsed by
@@ -145,6 +163,7 @@ export interface SlackChannelAdapterOptions {
 export declare class SlackChannelAdapter implements ChannelAdapter {
     readonly channel = "slack";
     private readonly teamId;
+    private readonly channelId;
     private readonly messages;
     private readonly pullFn;
     constructor(options?: SlackChannelAdapterOptions);

@@ -152,10 +152,13 @@ Slack counterparty is detected by `detectBridgeCapability`.
 **Events API signature-verification contract (for the M2.4 webhook service — not built here).** The
 transform authenticates nothing about the *source*; the deployed receiver must, over the **raw request
 body before any JSON parse**: verify `X-Slack-Signature` = `v0=` + HMAC-SHA256(signing secret,
-`v0:<X-Slack-Request-Timestamp>:<raw-body>`) in constant time, reject a timestamp skew > 300 s, ack
-within **3 s** (Slack retries ×3 with `X-Slack-Retry-Num`), and lean on the deterministic in-pod slug +
-create-only (`If-None-Match: *`) writes for retry/replay idempotency (no dedupe table). The
-`url_verification` handshake is answered by the service (echo `challenge`) — the transform refuses it.
+`v0:<X-Slack-Request-Timestamp>:<raw-body>`) in constant time, reject a timestamp skew > 300 s, and ack
+within **3 s** (Slack retries ×3 with `X-Slack-Retry-Num`). A deterministic in-pod slug maps a
+retried/replayed delivery to the same URL, but the current `importInbound` write path is a plain `PUT`
+(overwrite) — retry/replay **idempotency is a property the M2.4 service must add** via create-only
+writes (`If-None-Match: *`, treating `412` as already-imported), not something this M2.1 adapter
+provides. The `url_verification` handshake is answered by the service (echo `challenge`) — the
+transform refuses it.
 The live remote read (`conversations.history` backfill / Socket Mode / the bot-token file fetch) MUST
 route through `@jeswr/guarded-fetch`, with the bot token only as a request header. Full contract in the
 `src/slack.ts` module doc.

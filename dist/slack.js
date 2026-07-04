@@ -43,10 +43,13 @@
  *     `X-Slack-Retry-Num` / `X-Slack-Retry-Reason`) otherwise. The service must
  *     verify → transform → create-only pod write → 200 quickly; the LLM pass is
  *     decoupled (M2-DESIGN.md §3.6).
- *  3. **Retry / replay dedupe.** `event_id` (and `ts`) are globally unique, so the
- *     deterministic in-pod slug + create-only (`If-None-Match: *`) writes make a
- *     retried/replayed delivery idempotent (it maps to the same URL → 412 → treated
- *     as already-imported). No dedupe table needed (M2-DESIGN.md §3.4).
+ *  3. **Retry / replay dedupe.** `event_id` (and `ts`) are globally unique, so a
+ *     deterministic in-pod slug makes a retried/replayed delivery map to the SAME
+ *     URL. NOTE the M2.1 `importInbound` write path is a plain `PUT` (overwrite) and
+ *     does NOT itself provide idempotency; the M2.4 service must add create-only
+ *     writes (`If-None-Match: *`, treating `412` as already-imported) — the property
+ *     the design assigns to the service, not this adapter (M2-DESIGN.md §3.3/§3.4).
+ *     No dedupe table is then needed.
  *  4. **`url_verification`.** The endpoint-registration handshake
  *     (`{ type: "url_verification", challenge }`) is answered by the service (echo
  *     `challenge`); it is NOT a message, so this transform REFUSES it
@@ -94,6 +97,8 @@ const MAX_SIGNAL_CHARS = 4096;
 const SLACK_TEAM_ID = /^T[A-Z0-9]{1,20}$/;
 /** A Slack user id (`U…`, or `W…` on Enterprise Grid). */
 const SLACK_USER_ID = /^[UW][A-Z0-9]{1,20}$/;
+/** A Slack conversation id — public channel (`C…`), DM (`D…`), or private group (`G…`). */
+const SLACK_CONVERSATION_ID = /^[CDG][A-Z0-9]{1,20}$/;
 /** A Slack message timestamp (`<epoch-seconds>.<microseconds>`). */
 const SLACK_TS = /^\d{1,10}\.\d{1,6}$/;
 /** The inner-event types this transform accepts as an inbound message. */
@@ -272,9 +277,21 @@ export function slackEventToBridgeMessage(raw, ctx = {}) {
     else {
         warnings.push("slack sender team/user id missing or out-of-shape; sender left provisional.");
     }
+    // A Slack `ts` is only CHANNEL-scoped, so `messageId`/`threadId` are qualified with
+    // the (validated) conversation id — `<C…>:<ts>` — to be workspace-unambiguous (two
+    // channels could otherwise present the same `ts`). The conversation id comes from
+    // the event (`inner.channel`) or, for a per-conversation backfill row that omits it,
+    // `ctx.channelId`. When neither is a valid id the ids fall back to the bare `ts`.
+    const conversation = firstValid([asString(inner.channel), ctx.channelId], SLACK_CONVERSATION_ID);
+    const qualify = (t) => (conversation !== undefined ? `${conversation}:${t}` : t);
+    if (conversation === undefined) {
+        warnings.push("slack conversation id missing/out-of-shape; message/thread ids are ts-only.");
+    }
     // Thread linkage — the parent root ts of a threaded reply (`thread_ts` ≠ own `ts`).
     const threadTs = asString(inner.thread_ts);
-    const threadId = threadTs !== undefined && SLACK_TS.test(threadTs) && threadTs !== ts ? threadTs : undefined;
+    const threadId = threadTs !== undefined && SLACK_TS.test(threadTs) && threadTs !== ts
+        ? qualify(threadTs)
+        : undefined;
     const date = tsToIso(ts);
     return {
         channel: SLACK_CHANNEL,
@@ -282,7 +299,7 @@ export function slackEventToBridgeMessage(raw, ctx = {}) {
         textBody,
         ...(threadId !== undefined ? { threadId } : {}),
         ...(date !== undefined ? { date } : {}),
-        messageId: ts,
+        messageId: qualify(ts),
         signals: slackSignals(inner),
         rawSha256,
         rawByteLength: buf.length,
@@ -302,15 +319,20 @@ export function slackEventToBridgeMessage(raw, ctx = {}) {
 export class SlackChannelAdapter {
     channel = SLACK_CHANNEL;
     teamId;
+    channelId;
     messages;
     pullFn;
     constructor(options = {}) {
         this.teamId = options.teamId;
+        this.channelId = options.channelId;
         this.messages = options.messages ?? [];
         this.pullFn = options.pull;
     }
     parse(item) {
-        return slackEventToBridgeMessage(item.raw, { teamId: this.teamId });
+        return slackEventToBridgeMessage(item.raw, {
+            teamId: this.teamId,
+            channelId: this.channelId,
+        });
     }
     pullInbound() {
         return this.pullFn !== undefined ? this.pullFn() : Promise.resolve(this.messages);

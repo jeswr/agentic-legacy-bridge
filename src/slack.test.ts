@@ -48,7 +48,7 @@ describe("slackEventToBridgeMessage — the happy path", () => {
     expect(m.channel).toBe("slack");
     expect(m.sender?.handle).toBe("T123:U456");
     expect(m.textBody).toBe("Can we meet at 2026-07-08T14:00:00Z?");
-    expect(m.messageId).toBe("1720000000.000100");
+    expect(m.messageId).toBe("C111:1720000000.000100"); // conversation-qualified (channel-unambiguous)
     expect(m.date).toBe(new Date(1_720_000_000_000).toISOString()); // ts seconds → ISO
     expect(m.rawMediaType).toBe("application/json");
     expect(m.subject).toBeUndefined();
@@ -109,7 +109,7 @@ describe("slackEventToBridgeMessage — the happy path", () => {
         thread_ts: "1720000000.000100",
       }),
     );
-    expect(reply.threadId).toBe("1720000000.000100");
+    expect(reply.threadId).toBe("C111:1720000000.000100"); // conversation-qualified parent ts
     const root = slackEventToBridgeMessage(
       eventCallback({
         user: "U456",
@@ -119,6 +119,38 @@ describe("slackEventToBridgeMessage — the happy path", () => {
       }),
     );
     expect(root.threadId).toBeUndefined(); // thread_ts === ts → not a reply
+  });
+
+  it("qualifies messageId/threadId with a validated conversation id (channel-unambiguous)", () => {
+    // The event's own channel wins.
+    const fromEvent = slackEventToBridgeMessage(
+      eventCallback(
+        {
+          user: "U456",
+          text: "hi",
+          ts: "1720000000.000100",
+          thread_ts: "1720000000.000000",
+          channel: "C222",
+        },
+        { team_id: "T1" },
+      ),
+    );
+    expect(fromEvent.messageId).toBe("C222:1720000000.000100");
+    expect(fromEvent.threadId).toBe("C222:1720000000.000000");
+    // A bare backfill row uses ctx.channelId.
+    const fromCtx = slackEventToBridgeMessage(
+      JSON.stringify({ type: "message", user: "U789", text: "hi", ts: "1719000000.000200" }),
+      { teamId: "T1", channelId: "D333" },
+    );
+    expect(fromCtx.messageId).toBe("D333:1719000000.000200");
+  });
+
+  it("falls back to a ts-only id (with a warning) when the conversation id is out-of-shape", () => {
+    const m = slackEventToBridgeMessage(
+      eventCallback({ user: "U456", text: "hi", ts: "1720000000.000100", channel: "not-a-chan>" }),
+    );
+    expect(m.messageId).toBe("1720000000.000100"); // no injection-carrying prefix
+    expect(m.warnings.some((w) => w.includes("conversation id"))).toBe(true);
   });
 
   it("extracts a display name from user_profile / username", () => {
@@ -360,14 +392,15 @@ function recordingFetch(puts: Put[]): typeof globalThis.fetch {
 }
 
 describe("SlackChannelAdapter", () => {
-  it("parses via slackEventToBridgeMessage and threads the configured teamId", () => {
-    const adapter = new SlackChannelAdapter({ teamId: "T555" });
+  it("parses via slackEventToBridgeMessage and threads the configured teamId + channelId", () => {
+    const adapter = new SlackChannelAdapter({ teamId: "T555", channelId: "C999" });
     const m = adapter.parse({
       id: "1719000000.000200",
       raw: JSON.stringify({ type: "message", user: "U789", text: "hi", ts: "1719000000.000200" }),
     });
     expect(m.channel).toBe("slack");
     expect(m.sender?.handle).toBe("T555:U789");
+    expect(m.messageId).toBe("C999:1719000000.000200");
   });
 
   it("pullInbound returns the seeded messages (default), or the injected pull", async () => {
