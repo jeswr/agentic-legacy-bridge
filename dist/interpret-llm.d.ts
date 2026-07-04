@@ -157,8 +157,11 @@ export interface LlmInterpreterOptions {
     readonly tasks?: readonly ExtractionTask[];
     /**
      * Opt-in k-sample agreement (§2.3 rung c): run the extractor `kSamples` times per
-     * task and keep only items whose cross-run agreement ≥ {@link kAgreementThreshold},
-     * upgrading a span-verified survivor to `Calibrated`. Default `1` (off).
+     * task and keep only items whose cross-run agreement ≥ {@link kAgreementThreshold}.
+     * Agreement raises a kept item's SCORE within the calibration class its per-task
+     * deterministic cross-check earned — it NEVER promotes the class (a `SelfReported`
+     * free-text datum stays `SelfReported` however many samples agree; only a datum the
+     * cross-check already made `Calibrated` stays `Calibrated`). Default `1` (off).
      */
     readonly kSamples?: number;
     /** The k-sample agreement threshold in (0,1]. Default `0.66`. */

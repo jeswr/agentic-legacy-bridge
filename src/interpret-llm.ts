@@ -277,6 +277,26 @@ function withinSaneWindow(iso: string, now: Date): boolean {
   return t >= lo && t <= hi;
 }
 
+/**
+ * The maximum score a datum of a given calibration CLASS may reach — the ceiling the
+ * single-sample deterministic cross-check itself uses for that class. k-sample
+ * agreement raises a kept item's score toward its agreement ratio but is CLAMPED to
+ * this ceiling, so agreement can never push a `SelfReported` datum past
+ * {@link SPAN_ONLY_CAP} (which would be laundering) nor a `Calibrated` one past
+ * {@link REDERIVED_CAP}. A `Verified` datum (never produced by the default tasks) has
+ * no synthetic cap.
+ */
+function classScoreCeiling(calibration: Calibration): number {
+  switch (calibration) {
+    case "SelfReported":
+      return SPAN_ONLY_CAP;
+    case "Calibrated":
+      return REDERIVED_CAP;
+    default:
+      return 1;
+  }
+}
+
 const AFFIRM_WORDS = ["yes", "yeah", "yep", "sure", "confirm", "confirmed", "agreed", "ok", "okay"];
 const NEGATE_WORDS = ["no", "nope", "nah", "decline", "declined", "cannot", "can't", "won't"];
 
@@ -440,7 +460,16 @@ export const actionItemsTask: ExtractionTask<ActionItem> = {
     const subject = `${docIri}#llm-action-${index}`;
     return [
       { subject, predicate: RDF_TYPE, object: { kind: "iri", value: SCHEMA_ACTION } },
-      { subject, predicate: SCHEMA_NAME, object: { kind: "literal", value: item.description } },
+      {
+        subject,
+        predicate: SCHEMA_NAME,
+        // The description is free text NO cross-check re-derives → descriptive, at
+        // parity with meetingTimes' name: forced `SelfReported` + capped at
+        // {@link SPAN_ONLY_CAP} in `lowerItems`, so a hostile action description can
+        // never ride an upgraded envelope into a `Calibrated`/`auto` literal.
+        object: { kind: "literal", value: item.description },
+        descriptive: true,
+      },
     ];
   },
 };
@@ -537,8 +566,11 @@ export interface LlmInterpreterOptions {
   readonly tasks?: readonly ExtractionTask[];
   /**
    * Opt-in k-sample agreement (§2.3 rung c): run the extractor `kSamples` times per
-   * task and keep only items whose cross-run agreement ≥ {@link kAgreementThreshold},
-   * upgrading a span-verified survivor to `Calibrated`. Default `1` (off).
+   * task and keep only items whose cross-run agreement ≥ {@link kAgreementThreshold}.
+   * Agreement raises a kept item's SCORE within the calibration class its per-task
+   * deterministic cross-check earned — it NEVER promotes the class (a `SelfReported`
+   * free-text datum stays `SelfReported` however many samples agree; only a datum the
+   * cross-check already made `Calibrated` stays `Calibrated`). Default `1` (off).
    */
   readonly kSamples?: number;
   /** The k-sample agreement threshold in (0,1]. Default `0.66`. */
@@ -707,12 +739,24 @@ export class LlmInterpreter implements AsyncInterpreter {
       return [];
     }
     return this.lowerItems(task, kept, docIri, (item) => {
+      // The per-task deterministic cross-check is AUTHORITATIVE for the calibration
+      // CLASS. k-sample agreement is only an independent-repetition signal on the
+      // SCORE — it must NEVER promote the class the cross-check earned. Otherwise a
+      // hostile message could launder its own free-text (a `SelfReported`
+      // action-item description) into `Calibrated`/`auto` merely by the extractor
+      // repeating it — which at temperature 0 it does with perfect "agreement".
+      const base = task.calibrate(item, { body: text, now });
       // The span floor is NEVER bypassable by agreement: an un-sourced item stays
       // `audit` even if every sample agreed on the hallucination.
-      const span = task.calibrate(item, { body: text, now });
-      if (span.score <= AUDIT_FLOOR) return span;
+      if (base.score <= AUDIT_FLOOR) return base;
       const ratio = agreement.get(item) ?? 0;
-      return { score: ratio, calibration: "Calibrated" };
+      // Agreement may raise the score toward `ratio`, but never BELOW the
+      // deterministic score and never ABOVE the ceiling of the class the cross-check
+      // assigned. The calibration CLASS is preserved verbatim (SelfReported stays
+      // SelfReported); agreement raises the score WITHIN the class only.
+      const ceiling = classScoreCeiling(base.calibration);
+      const score = Math.min(Math.max(base.score, ratio), ceiling);
+      return { score, calibration: base.calibration };
     });
   }
 
