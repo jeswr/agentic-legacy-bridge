@@ -1,0 +1,70 @@
+{
+  "name": "@jeswr/agentic-legacy-bridge",
+  "version": "0.0.1",
+  "description": "The path FROM today's channels (email first) TO the accountable web of agents: parse an inbound legacy message, model its sender as a Person/agent, interpret it into structured RDF with a per-datum reliability score, persist it owner-private in a Solid pod, and answer with a structured, upgrade-negotiating reply.",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./email": {
+      "types": "./dist/email/index.d.ts",
+      "import": "./dist/email/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "PROTOCOL.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "lint": "biome check src scripts && npm run check:lockfile-transport",
+    "lint:fix": "biome check --write src scripts",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "check:dist": "node scripts/check-dist.mjs",
+    "check:lockfile-transport": "node scripts/check-lockfile-transport.mjs",
+    "gate": "npm run lint && npm run typecheck && npm run test && npm run build && npm run check:dist"
+  },
+  "keywords": [
+    "solid",
+    "rdf",
+    "email",
+    "rfc5322",
+    "mime",
+    "agentic",
+    "provenance",
+    "prov-o",
+    "legacy-interop",
+    "reliability",
+    "verifiable-credential"
+  ],
+  "author": "Jesse Wright",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/jeswr/agentic-legacy-bridge.git"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@jeswr/guarded-fetch": "git+https://github.com/jeswr/guarded-fetch.git#bd4490927fd36d62f6b78a0021e8d40bbb572c3b",
+    "@jeswr/solid-chat-interop": "git+https://github.com/jeswr/solid-chat-interop.git#f48de5a17f06dd1be5514d6a9d62b26107304c93",
+    "n3": "^2.0.3"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.0.0",
+    "@rdfjs/types": "^2.0.1",
+    "@types/n3": "^1.26.1",
+    "@types/node": "^20",
+    "typescript": "^5",
+    "vitest": "^4.1.8"
+  }
+}

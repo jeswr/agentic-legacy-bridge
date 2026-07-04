@@ -1,0 +1,162 @@
+// AUTHORED-BY Claude Opus 4.8 (Fable unavailable) — re-review/upgrade candidate.
+/**
+ * Assemble the AGENTIC RDF graph for one inbound message: the raw-message anchor
+ * (`prov:Entity` + `schema:Message` + `agentic:RawInboundMessage`, LEGACY-INTEROP.md
+ * §2.2), the sender {@link addSenderPerson Person}, and the reliability-tagged
+ * {@link addInterpretation interpretations} (§3b) — one owner-private Turtle doc,
+ * serialised with `n3.Writer` (never hand-built triples).
+ *
+ * The raw BYTES themselves are stored separately as a byte-exact sibling resource
+ * (so the provenance anchor is real + auditable); this graph carries their SHA-256
+ * digest and, when known, a `schema:url` link to that resource.
+ */
+
+import { DataFactory, Store, Writer } from "n3";
+import type { EmailMessage } from "./email/types.js";
+import { addInterpretation, type Interpretation } from "./reliability.js";
+import { safeHttpIri, sanitizeText } from "./safe-iri.js";
+import { addSenderPerson } from "./sender.js";
+import {
+  AGENTIC_CHANNEL,
+  AGENTIC_RAW_DIGEST,
+  AGENTIC_RAW_INBOUND_MESSAGE,
+  AGENTIC_RAW_MEDIA_TYPE,
+  PREFIXES,
+  PROV_ENTITY,
+  RDF_TYPE,
+  SCHEMA_DATE_RECEIVED,
+  SCHEMA_DATE_SENT,
+  SCHEMA_MESSAGE,
+  SCHEMA_SENDER,
+  SCHEMA_URL,
+  XSD,
+} from "./vocab.js";
+
+const { namedNode, literal } = DataFactory;
+
+/** Options for {@link buildAgenticGraph}. */
+export interface AgenticGraphOptions {
+  /** The parsed inbound message. */
+  readonly message: EmailMessage;
+  /** The channel this arrived on (e.g. `"email"`). Control-stripped when written. */
+  readonly channel: string;
+  /** The resource IRI this graph is served at (interpreted subjects mint fragments under it). */
+  readonly docIri: string;
+  /** The minted raw-message anchor IRI (a `urn:agentic:raw:…`, safe by construction). */
+  readonly rawMessageIri: string;
+  /** The media type of the stored raw bytes (default `message/rfc822`). */
+  readonly rawMediaType?: string;
+  /** The http(s) IRI where the byte-exact raw resource is stored, when known. */
+  readonly rawResourceIri?: string;
+  /** ISO ingestion time (`schema:dateReceived`); defaults to now. */
+  readonly receivedAt?: string;
+  /** The interpretations to lower (with their §3b reliability provenance). */
+  readonly interpretations?: readonly Interpretation[];
+  /** Caller-supplied UNVERIFIED candidate WebIDs for the sender. */
+  readonly candidateWebIds?: readonly string[];
+  /** The interpreting agent's WebID (`prov:wasAssociatedWith` on each interpretation activity). */
+  readonly interpretingAgentWebId?: string;
+  /** The ODRL mandate the interpreting agent acts under (`prov:hadPlan`). */
+  readonly mandateIri?: string;
+}
+
+/** The result of building the agentic graph. */
+export interface AgenticGraphResult {
+  /** The serialised Turtle document. */
+  readonly turtle: string;
+  /** The minted sender person node IRI. */
+  readonly personIri: string;
+  /** The interpretation node IRIs actually written (dropped/unsafe ones excluded). */
+  readonly interpretationIris: readonly string[];
+}
+
+/** Build the agentic Turtle graph for one inbound message. */
+export async function buildAgenticGraph(options: AgenticGraphOptions): Promise<AgenticGraphResult> {
+  const store = new Store();
+  const raw = namedNode(options.rawMessageIri);
+
+  // --- raw-message anchor ---
+  store.addQuad(raw, namedNode(RDF_TYPE), namedNode(PROV_ENTITY));
+  store.addQuad(raw, namedNode(RDF_TYPE), namedNode(SCHEMA_MESSAGE));
+  store.addQuad(raw, namedNode(RDF_TYPE), namedNode(AGENTIC_RAW_INBOUND_MESSAGE));
+  store.addQuad(
+    raw,
+    namedNode(AGENTIC_CHANNEL),
+    literal(sanitizeText(options.channel).slice(0, 64)),
+  );
+  store.addQuad(
+    raw,
+    namedNode(AGENTIC_RAW_MEDIA_TYPE),
+    literal(sanitizeMediaType(options.rawMediaType) ?? "message/rfc822"),
+  );
+  store.addQuad(raw, namedNode(AGENTIC_RAW_DIGEST), literal(`sha256:${options.message.rawSha256}`));
+  const receivedAt = isoOrNow(options.receivedAt);
+  store.addQuad(
+    raw,
+    namedNode(SCHEMA_DATE_RECEIVED),
+    literal(receivedAt, namedNode(`${XSD}dateTime`)),
+  );
+  if (options.message.date !== undefined) {
+    store.addQuad(
+      raw,
+      namedNode(SCHEMA_DATE_SENT),
+      literal(options.message.date, namedNode(`${XSD}dateTime`)),
+    );
+  }
+  const rawResource = safeHttpIri(options.rawResourceIri);
+  if (rawResource !== undefined) {
+    store.addQuad(raw, namedNode(SCHEMA_URL), namedNode(rawResource));
+  }
+
+  // --- sender ---
+  const { personIri } = addSenderPerson(store, options.message, {
+    ...(options.candidateWebIds !== undefined ? { candidateWebIds: options.candidateWebIds } : {}),
+  });
+  store.addQuad(raw, namedNode(SCHEMA_SENDER), namedNode(personIri));
+
+  // --- interpretations ---
+  const interpretationIris: string[] = [];
+  const interps = options.interpretations ?? [];
+  for (let i = 0; i < interps.length; i++) {
+    const iri = addInterpretation(store, interps[i] as Interpretation, i + 1, {
+      docIri: options.docIri,
+      rawMessageIri: options.rawMessageIri,
+      ...(options.interpretingAgentWebId !== undefined
+        ? { interpretingAgentWebId: options.interpretingAgentWebId }
+        : {}),
+      ...(options.mandateIri !== undefined ? { mandateIri: options.mandateIri } : {}),
+      endedAtTime: receivedAt,
+    });
+    if (iri !== undefined) interpretationIris.push(iri);
+  }
+
+  const turtle = await serialize(store);
+  return { turtle, personIri, interpretationIris };
+}
+
+/** Serialise a store to Turtle with the package prefix map. */
+function serialize(store: Store): Promise<string> {
+  const writer = new Writer({ format: "text/turtle", prefixes: { ...PREFIXES } });
+  writer.addQuads([...store]);
+  return new Promise<string>((resolve, reject) => {
+    writer.end((error, result) => (error ? reject(error) : resolve(result)));
+  });
+}
+
+/** Accept only a plausible `type/subtype` media type; else undefined (→ default). */
+function sanitizeMediaType(value: string | undefined): string | undefined {
+  if (value === undefined) return undefined;
+  const v = sanitizeText(value).trim().toLowerCase();
+  return /^[a-z0-9][a-z0-9!#$&^_.+-]{0,60}\/[a-z0-9][a-z0-9!#$&^_.+-]{0,60}$/.test(v)
+    ? v
+    : undefined;
+}
+
+/** Return `iso` if valid, else now. */
+function isoOrNow(iso: string | undefined): string {
+  if (iso !== undefined) {
+    const ms = Date.parse(iso);
+    if (!Number.isNaN(ms)) return new Date(ms).toISOString();
+  }
+  return new Date().toISOString();
+}
