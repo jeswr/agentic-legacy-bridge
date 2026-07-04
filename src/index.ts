@@ -135,6 +135,16 @@ export {
   SlackParseError,
   slackEventToBridgeMessage,
 } from "./slack.js";
-
 // --- vocabulary ---
 export * as vocab from "./vocab.js";
+// --- channels: whatsapp business cloud (M2.2) ---
+export {
+  WHATSAPP_CHANNEL,
+  WHATSAPP_RAW_MEDIA_TYPE,
+  WhatsAppChannelAdapter,
+  type WhatsAppChannelAdapterOptions,
+  type WhatsAppParseContext,
+  WhatsAppParseError,
+  waIdToTelIri,
+  waMessageToBridgeMessage,
+} from "./whatsapp.js";

@@ -43,4 +43,5 @@ export { base64Url, canonicalContainer, isValidEmailAddress, isWithinBase, mintU
 export { addSenderPerson, personIriFor, type SenderOptions, type SenderResult } from "./sender.js";
 export { SLACK_AGENTIC_METADATA_EVENT_TYPE, SLACK_CHANNEL, SLACK_RAW_MEDIA_TYPE, SlackChannelAdapter, type SlackChannelAdapterOptions, type SlackParseContext, SlackParseError, slackEventToBridgeMessage, } from "./slack.js";
 export * as vocab from "./vocab.js";
+export { WHATSAPP_CHANNEL, WHATSAPP_RAW_MEDIA_TYPE, WhatsAppChannelAdapter, type WhatsAppChannelAdapterOptions, type WhatsAppParseContext, WhatsAppParseError, waIdToTelIri, waMessageToBridgeMessage, } from "./whatsapp.js";
 //# sourceMappingURL=index.d.ts.map
