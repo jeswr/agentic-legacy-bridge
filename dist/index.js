@@ -39,6 +39,9 @@ export { buildAgenticGraph, } from "./graph.js";
 export { importInbound, } from "./import.js";
 // --- rung 2: interpret with reliability ---
 export { DeterministicInterpreter, deterministicInterpreter, extractIsoDateTimes, extractRelativeMeetings, } from "./interpret.js";
+// --- rung 2: the live-LLM interpreter (M2.3) ---
+export { actionItemsTask, DEFAULT_TASKS, LlmInterpreter, meetingTimesTask, replyPolarityTask, scriptedExtractor, } from "./interpret-llm.js";
+export { createHttpLlmExtractor, } from "./interpret-llm-http.js";
 // --- the channel-neutral message shape (M2.0) ---
 export { asBridgeMessage, isBridgeMessage, toBridgeMessage, } from "./message.js";
 // --- rung 4: negotiation ---

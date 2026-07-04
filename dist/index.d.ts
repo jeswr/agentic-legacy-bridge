@@ -35,6 +35,8 @@ export { ChannelParseError } from "./errors.js";
 export { type AgenticGraphOptions, type AgenticGraphResult, buildAgenticGraph, } from "./graph.js";
 export { type ImportInboundOptions, type ImportInboundResult, importInbound, } from "./import.js";
 export { DeterministicInterpreter, deterministicInterpreter, extractIsoDateTimes, extractRelativeMeetings, type InterpretContext, type Interpreter, } from "./interpret.js";
+export { type AsyncInterpreter, actionItemsTask, DEFAULT_TASKS, type ExtractionTask, type LlmExtractor, LlmInterpreter, type LlmInterpreterOptions, type LlmInterpretResult, meetingTimesTask, replyPolarityTask, scriptedExtractor, } from "./interpret-llm.js";
+export { createHttpLlmExtractor, type HttpLlmExtractorOptions, } from "./interpret-llm-http.js";
 export { asBridgeMessage, type BridgeMessage, type BridgeSender, isBridgeMessage, toBridgeMessage, } from "./message.js";
 export { asChannel, type BridgeCapability, CHANNEL_EXTENSION_URI, CHANNEL_PREFERENCE, CHANNELS_HEADER, type Channel, decideUpgrade, detectBridgeCapability, highestMutualChannel, type InboundSignals, REPLY_HEADER, type UpgradeDecision, type UpgradeOffer, type UpgradeResponse, } from "./negotiate.js";
 export { addInterpretation, type Calibration, clampConfidence, classifyReliability, DEFAULT_THRESHOLDS, type Interpretation, type InterpretationGraphContext, type InterpretationMethod, type InterpretationObject, type ReliabilityDecision, type ReliabilityThresholds, } from "./reliability.js";

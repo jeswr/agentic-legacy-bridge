@@ -53,6 +53,19 @@ export interface Interpretation {
     readonly securityBearing?: boolean;
     /** An optional human-readable note (control-stripped when written). */
     readonly note?: string;
+    /**
+     * The opaque model tag when this datum came from a live LLM (the M2.3
+     * `LlmInterpreter`, M2-DESIGN.md §2.3) — written as `agentic:model` on the
+     * interpreting activity so an auditor sees WHICH model produced the datum.
+     * OWNER-CONFIGURED (never read from model output); sanitised + capped on write.
+     */
+    readonly model?: string;
+    /**
+     * The extraction-task id (e.g. `"meeting-times"`) — written as `dct:description`
+     * on the interpreting activity so an auditor can reproduce the exact extraction
+     * (M2-DESIGN.md §2.3). Sanitised + capped on write.
+     */
+    readonly extractionTask?: string;
 }
 /** Context for lowering interpretations into RDF quads. */
 export interface InterpretationGraphContext {

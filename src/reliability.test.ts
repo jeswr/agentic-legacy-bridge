@@ -14,8 +14,10 @@ import {
   AGENTIC_INTERPRETATION,
   AGENTIC_INTERPRETATION_METHOD,
   AGENTIC_LLM_INTERPRETATION,
+  AGENTIC_MODEL,
   AGENTIC_SECURITY_BEARING,
   AGENTIC_SELF_REPORTED,
+  DCT,
   PROV_WAS_DERIVED_FROM,
 } from "./vocab.js";
 
@@ -126,6 +128,49 @@ describe("addInterpretation", () => {
       expect(q.object.value).not.toBe("");
       expect(q.object.value).not.toContain("undefined");
     }
+  });
+});
+
+describe("addInterpretation — LLM model/task PROV (M2.3)", () => {
+  it("writes agentic:model + dct:description on the activity when set", () => {
+    const store = new Store();
+    const iri = addInterpretation(
+      store,
+      interp({ model: "gpt-x", extractionTask: "meeting-times" }),
+      5,
+      {
+        docIri: DOC,
+        rawMessageIri: RAW,
+      },
+    );
+    if (iri === undefined) throw new Error("expected an interpretation IRI");
+    const activity = `${DOC}#interp-5-activity`;
+    expect(store.getQuads(activity, AGENTIC_MODEL, null, null)[0]?.object.value).toBe("gpt-x");
+    expect(store.getQuads(activity, `${DCT}description`, null, null)[0]?.object.value).toBe(
+      "meeting-times",
+    );
+  });
+
+  it("writes NEITHER for a deterministic datum (back-compat: existing output unchanged)", () => {
+    const store = new Store();
+    addInterpretation(store, interp({ method: "Deterministic" }), 6, {
+      docIri: DOC,
+      rawMessageIri: RAW,
+    });
+    const activity = `${DOC}#interp-6-activity`;
+    expect(store.getQuads(activity, AGENTIC_MODEL, null, null).length).toBe(0);
+    expect(store.getQuads(activity, `${DCT}description`, null, null).length).toBe(0);
+  });
+
+  it("sanitises + caps the (owner-config) model tag as untrusted-string defence-in-depth", () => {
+    const store = new Store();
+    addInterpretation(store, interp({ model: "m".repeat(200) }), 7, {
+      docIri: DOC,
+      rawMessageIri: RAW,
+    });
+    const activity = `${DOC}#interp-7-activity`;
+    const v = store.getQuads(activity, AGENTIC_MODEL, null, null)[0]?.object.value ?? "";
+    expect(v.length).toBeLessThanOrEqual(128);
   });
 });
 
