@@ -11,14 +11,18 @@
  * digest and, when known, a `schema:url` link to that resource.
  */
 import { DataFactory, Store, Writer } from "n3";
+import { asBridgeMessage } from "./message.js";
 import { addInterpretation } from "./reliability.js";
-import { asUrn, safeHttpIri, sanitizeText } from "./safe-iri.js";
+import { asUrn, safeHttpIri, safeMediaType, sanitizeText } from "./safe-iri.js";
 import { addSenderPerson } from "./sender.js";
 import { AGENTIC_CHANNEL, AGENTIC_RAW_DIGEST, AGENTIC_RAW_INBOUND_MESSAGE, AGENTIC_RAW_MEDIA_TYPE, PREFIXES, PROV_ENTITY, RDF_TYPE, SCHEMA_DATE_RECEIVED, SCHEMA_DATE_SENT, SCHEMA_MESSAGE, SCHEMA_SENDER, SCHEMA_URL, XSD, } from "./vocab.js";
 const { namedNode, literal } = DataFactory;
 /** Build the agentic Turtle graph for one inbound message. */
 export async function buildAgenticGraph(options) {
     const store = new Store();
+    // Normalise to the channel-neutral shape (an M1 EmailMessage maps 1:1 — the
+    // email path's output is unchanged through this seam).
+    const message = asBridgeMessage(options.message);
     // Re-validate the raw-message anchor before it becomes a `namedNode()`. Although
     // this IRI is normally minted internally (a `urn:agentic:raw:…`, safe by
     // construction), `buildAgenticGraph` is a public API — an untrusted or malformed
@@ -36,19 +40,21 @@ export async function buildAgenticGraph(options) {
     store.addQuad(raw, namedNode(RDF_TYPE), namedNode(SCHEMA_MESSAGE));
     store.addQuad(raw, namedNode(RDF_TYPE), namedNode(AGENTIC_RAW_INBOUND_MESSAGE));
     store.addQuad(raw, namedNode(AGENTIC_CHANNEL), literal(sanitizeText(options.channel).slice(0, 64)));
-    store.addQuad(raw, namedNode(AGENTIC_RAW_MEDIA_TYPE), literal(sanitizeMediaType(options.rawMediaType) ?? "message/rfc822"));
-    store.addQuad(raw, namedNode(AGENTIC_RAW_DIGEST), literal(`sha256:${options.message.rawSha256}`));
+    store.addQuad(raw, namedNode(AGENTIC_RAW_MEDIA_TYPE), literal(safeMediaType(options.rawMediaType) ??
+        safeMediaType(message.rawMediaType) ??
+        "message/rfc822"));
+    store.addQuad(raw, namedNode(AGENTIC_RAW_DIGEST), literal(`sha256:${message.rawSha256}`));
     const receivedAt = isoOrNow(options.receivedAt);
     store.addQuad(raw, namedNode(SCHEMA_DATE_RECEIVED), literal(receivedAt, namedNode(`${XSD}dateTime`)));
-    if (options.message.date !== undefined) {
-        store.addQuad(raw, namedNode(SCHEMA_DATE_SENT), literal(options.message.date, namedNode(`${XSD}dateTime`)));
+    if (message.date !== undefined) {
+        store.addQuad(raw, namedNode(SCHEMA_DATE_SENT), literal(message.date, namedNode(`${XSD}dateTime`)));
     }
     const rawResource = safeHttpIri(options.rawResourceIri);
     if (rawResource !== undefined) {
         store.addQuad(raw, namedNode(SCHEMA_URL), namedNode(rawResource));
     }
     // --- sender ---
-    const { personIri } = addSenderPerson(store, options.message, {
+    const { personIri } = addSenderPerson(store, message, {
         ...(options.candidateWebIds !== undefined ? { candidateWebIds: options.candidateWebIds } : {}),
     });
     store.addQuad(raw, namedNode(SCHEMA_SENDER), namedNode(personIri));
@@ -78,15 +84,6 @@ function serialize(store) {
     return new Promise((resolve, reject) => {
         writer.end((error, result) => (error ? reject(error) : resolve(result)));
     });
-}
-/** Accept only a plausible `type/subtype` media type; else undefined (→ default). */
-function sanitizeMediaType(value) {
-    if (value === undefined)
-        return undefined;
-    const v = sanitizeText(value).trim().toLowerCase();
-    return /^[a-z0-9][a-z0-9!#$&^_.+-]{0,60}\/[a-z0-9][a-z0-9!#$&^_.+-]{0,60}$/.test(v)
-        ? v
-        : undefined;
 }
 /** Return `iso` if valid, else now. */
 function isoOrNow(iso) {

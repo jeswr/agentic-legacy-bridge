@@ -87,4 +87,19 @@ export declare function asUrn(value: unknown): string | undefined;
  * reconcilable (the SAME key always mints the SAME urn).
  */
 export declare function mintUrn(kind: "person" | "raw" | "interp", key: string): string;
+/**
+ * Build an injection-safe `tel:` IRI (RFC 3966 global-number form) for an
+ * UNTRUSTED phone-number handle, or `undefined` if it is not strict E.164
+ * (M2-DESIGN.md §1.2 — the `safeMailtoIri` sibling for phone-keyed channels like
+ * WhatsApp). The accepted alphabet is `+` and digits only, so the result carries
+ * no IRIREF-forbidden char by construction. NEVER pass a raw number to `namedNode`.
+ */
+export declare function safeTelIri(value: unknown): string | undefined;
+/**
+ * Accept only a plausible lower-cased `type/subtype` media type (RFC 6838 token
+ * shape, length-capped) from an UNTRUSTED value; else `undefined`. Used before a
+ * media type becomes a stored-literal or an HTTP `content-type` — a malformed
+ * value falls back to the caller's safe default, never travels verbatim.
+ */
+export declare function safeMediaType(value: unknown): string | undefined;
 //# sourceMappingURL=safe-iri.d.ts.map

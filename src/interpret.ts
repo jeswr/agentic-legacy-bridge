@@ -19,6 +19,7 @@
  */
 
 import type { EmailMessage } from "./email/types.js";
+import type { BridgeMessage } from "./message.js";
 import type { Interpretation } from "./reliability.js";
 import {
   AGENTIC_REPLY_POLARITY,
@@ -37,9 +38,14 @@ export interface InterpretContext {
   readonly now?: Date;
 }
 
-/** The interpretation seam: message → reliability-tagged interpreted data. */
+/**
+ * The interpretation seam: message → reliability-tagged interpreted data. Takes
+ * the channel-neutral {@link BridgeMessage} (M2.0 type-widening; an M1
+ * {@link EmailMessage} is still accepted unchanged — the reference implementation
+ * reads only the fields the two shapes share).
+ */
 export interface Interpreter {
-  interpret(message: EmailMessage, ctx: InterpretContext): Interpretation[];
+  interpret(message: BridgeMessage | EmailMessage, ctx: InterpretContext): Interpretation[];
 }
 
 /** Caps so a pathological body cannot produce an unbounded number of interpretations. */
@@ -61,7 +67,7 @@ const WEEKDAYS: Readonly<Record<string, number>> = {
  * function of the message body + `ctx.now`.
  */
 export class DeterministicInterpreter implements Interpreter {
-  interpret(message: EmailMessage, ctx: InterpretContext): Interpretation[] {
+  interpret(message: BridgeMessage | EmailMessage, ctx: InterpretContext): Interpretation[] {
     const text = clip(unquote(message.textBody));
     const out: Interpretation[] = [];
     const now = ctx.now ?? new Date();

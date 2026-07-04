@@ -13,8 +13,9 @@
 
 import { DataFactory, Store, Writer } from "n3";
 import type { EmailMessage } from "./email/types.js";
+import { asBridgeMessage, type BridgeMessage } from "./message.js";
 import { addInterpretation, type Interpretation } from "./reliability.js";
-import { asUrn, safeHttpIri, sanitizeText } from "./safe-iri.js";
+import { asUrn, safeHttpIri, safeMediaType, sanitizeText } from "./safe-iri.js";
 import { addSenderPerson } from "./sender.js";
 import {
   AGENTIC_CHANNEL,
@@ -36,15 +37,15 @@ const { namedNode, literal } = DataFactory;
 
 /** Options for {@link buildAgenticGraph}. */
 export interface AgenticGraphOptions {
-  /** The parsed inbound message. */
-  readonly message: EmailMessage;
+  /** The parsed inbound message (channel-neutral, or an M1 `EmailMessage` unchanged). */
+  readonly message: BridgeMessage | EmailMessage;
   /** The channel this arrived on (e.g. `"email"`). Control-stripped when written. */
   readonly channel: string;
   /** The resource IRI this graph is served at (interpreted subjects mint fragments under it). */
   readonly docIri: string;
   /** The minted raw-message anchor IRI (a `urn:agentic:raw:…`, safe by construction). */
   readonly rawMessageIri: string;
-  /** The media type of the stored raw bytes (default `message/rfc822`). */
+  /** The media type of the stored raw bytes (default: the message's own; `message/rfc822` last). */
   readonly rawMediaType?: string;
   /** The http(s) IRI where the byte-exact raw resource is stored, when known. */
   readonly rawResourceIri?: string;
@@ -73,6 +74,9 @@ export interface AgenticGraphResult {
 /** Build the agentic Turtle graph for one inbound message. */
 export async function buildAgenticGraph(options: AgenticGraphOptions): Promise<AgenticGraphResult> {
   const store = new Store();
+  // Normalise to the channel-neutral shape (an M1 EmailMessage maps 1:1 — the
+  // email path's output is unchanged through this seam).
+  const message = asBridgeMessage(options.message);
   // Re-validate the raw-message anchor before it becomes a `namedNode()`. Although
   // this IRI is normally minted internally (a `urn:agentic:raw:…`, safe by
   // construction), `buildAgenticGraph` is a public API — an untrusted or malformed
@@ -100,20 +104,24 @@ export async function buildAgenticGraph(options: AgenticGraphOptions): Promise<A
   store.addQuad(
     raw,
     namedNode(AGENTIC_RAW_MEDIA_TYPE),
-    literal(sanitizeMediaType(options.rawMediaType) ?? "message/rfc822"),
+    literal(
+      safeMediaType(options.rawMediaType) ??
+        safeMediaType(message.rawMediaType) ??
+        "message/rfc822",
+    ),
   );
-  store.addQuad(raw, namedNode(AGENTIC_RAW_DIGEST), literal(`sha256:${options.message.rawSha256}`));
+  store.addQuad(raw, namedNode(AGENTIC_RAW_DIGEST), literal(`sha256:${message.rawSha256}`));
   const receivedAt = isoOrNow(options.receivedAt);
   store.addQuad(
     raw,
     namedNode(SCHEMA_DATE_RECEIVED),
     literal(receivedAt, namedNode(`${XSD}dateTime`)),
   );
-  if (options.message.date !== undefined) {
+  if (message.date !== undefined) {
     store.addQuad(
       raw,
       namedNode(SCHEMA_DATE_SENT),
-      literal(options.message.date, namedNode(`${XSD}dateTime`)),
+      literal(message.date, namedNode(`${XSD}dateTime`)),
     );
   }
   const rawResource = safeHttpIri(options.rawResourceIri);
@@ -122,7 +130,7 @@ export async function buildAgenticGraph(options: AgenticGraphOptions): Promise<A
   }
 
   // --- sender ---
-  const { personIri } = addSenderPerson(store, options.message, {
+  const { personIri } = addSenderPerson(store, message, {
     ...(options.candidateWebIds !== undefined ? { candidateWebIds: options.candidateWebIds } : {}),
   });
   store.addQuad(raw, namedNode(SCHEMA_SENDER), namedNode(personIri));
@@ -154,15 +162,6 @@ function serialize(store: Store): Promise<string> {
   return new Promise<string>((resolve, reject) => {
     writer.end((error, result) => (error ? reject(error) : resolve(result)));
   });
-}
-
-/** Accept only a plausible `type/subtype` media type; else undefined (→ default). */
-function sanitizeMediaType(value: string | undefined): string | undefined {
-  if (value === undefined) return undefined;
-  const v = sanitizeText(value).trim().toLowerCase();
-  return /^[a-z0-9][a-z0-9!#$&^_.+-]{0,60}\/[a-z0-9][a-z0-9!#$&^_.+-]{0,60}$/.test(v)
-    ? v
-    : undefined;
 }
 
 /** Return `iso` if valid, else now. */

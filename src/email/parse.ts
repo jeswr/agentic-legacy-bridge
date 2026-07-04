@@ -23,6 +23,7 @@
  */
 
 import { createHash } from "node:crypto";
+import { ChannelParseError } from "../errors.js";
 import { sanitizeText } from "../safe-iri.js";
 import type { EmailAddress, EmailMessage } from "./types.js";
 
@@ -62,8 +63,12 @@ const MAX_ADDRESSES = 256;
 /** Cap on decoded content bytes per leaf part (post-CTE). */
 const MAX_PART_BYTES = 8 * 1024 * 1024;
 
-/** A controlled, typed, fail-closed refusal (the only throw from {@link parseEmail}). */
-export class EmailParseError extends Error {
+/**
+ * A controlled, typed, fail-closed refusal (the only throw from {@link parseEmail}).
+ * Extends the channel-neutral `ChannelParseError` (M2.0) so `importInbound`'s
+ * skip-don't-abort catch is channel-agnostic; behaviour is otherwise unchanged.
+ */
+export class EmailParseError extends ChannelParseError {
   constructor(message: string) {
     super(message);
     this.name = "EmailParseError";

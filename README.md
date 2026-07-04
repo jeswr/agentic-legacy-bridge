@@ -8,10 +8,12 @@ packages rather than rebuilding them. Design record:
 the paper's §7 "The path from today"; the wire protocol in [`PROTOCOL.md`](./PROTOCOL.md); the design
 choices in [`docs/DECISIONS.md`](./docs/DECISIONS.md).
 
-> **M1 scope.** Email is the first channel; the entire input is untrusted. M1 is fully **hermetic** —
+> **Scope.** Email is the first channel; the entire input is untrusted. The core is fully **hermetic** —
 > the LLM interpreter, the reply signer, and the channel transport are all **injectable seams**, so
-> there is no live-LLM, crypto, or network dependency in the core. Slack/Matrix channels, a live LLM
-> interpreter, `solid-vc` signing, and an inbound-webhook service are M2 (see *Follow-ups*).
+> there is no live-LLM, crypto, or network dependency in the core. **M2.0 (landed)** makes the whole
+> pipeline **channel-neutral** (`BridgeMessage` + `ChannelAdapter.parse`, below); Slack/WhatsApp
+> adapters, a live LLM interpreter, `solid-vc` signing, and an inbound-webhook service are the
+> remaining M2 phases (see *Follow-ups* and [`docs/M2-DESIGN.md`](./docs/M2-DESIGN.md)).
 
 ## The four rungs
 
@@ -94,6 +96,26 @@ const cap = detectBridgeCapability({ headers: inboundHeaders });
 ```
 
 The `./email` subexport is the standalone hardened parser, importable without the RDF/pod machinery.
+
+## The channel-neutral spine (M2.0)
+
+The pipeline runs on one channel-neutral shape, **`BridgeMessage`** (what `EmailMessage` is, minus
+the email-isms: `channel`, an untrusted `sender.handle`, plain-text-only `textBody`, a `signals`
+header-map equivalent feeding `detectBridgeCapability`, and the raw-anchor digest/media type).
+A **`ChannelAdapter`** supplies `parse(raw) → BridgeMessage` — its hardened, pure, hermetically
+testable transform — and `importInbound` persists any channel identically (the raw anchor's
+extension/content-type follow `rawMediaType`: `.eml` for email, `.json` for event payloads).
+Email is the first adapter (`parseEmailInbound` = the M1 hardened parse mapped 1:1;
+`toBridgeMessage(email)` is the explicit mapping) and behaves exactly as in M1; every
+`EmailMessage`-taking entry point still accepts one unchanged. A refused input throws
+`ChannelParseError` (`EmailParseError` extends it) → that message is skipped, never the batch.
+
+Person nodes are **channel-scoped** so identity keys can never collide across namespaces: email
+keeps its M1 key (`urn:agentic:person:<base64url(address)>` — back-compatible with already-written
+pods); every other channel mints `urn:agentic:person:<channel>:<base64url(handle)>`. Cross-channel
+identity is only ever a candidate edge (`agentic:candidatePerson`), never a merge; `safeTelIri`
+(strict E.164) is the `safeMailtoIri` sibling for phone-keyed channels. This is the seam the M2.1
+(Slack), M2.2 (WhatsApp Cloud), and M2.3 (LLM interpreter) phases plug into.
 
 ## Security posture
 

@@ -80,6 +80,21 @@ export declare const AGENTIC_IDENTITY_STATUS = "https://w3id.org/jeswr/agentic#i
 export declare const AGENTIC_CANDIDATE_WEB_ID = "https://w3id.org/jeswr/agentic#candidateWebId";
 /** The CLAIMED (unverified in M1) DKIM signing domain from the message's DKIM-Signature header. */
 export declare const AGENTIC_DKIM_DOMAIN_CLAIM = "https://w3id.org/jeswr/agentic#dkimDomainClaim";
+/**
+ * A cross-CHANNEL person-node HINT edge between person URNs (M2-DESIGN.md §1.4) —
+ * a candidate, never a merge (never `owl:sameAs`), minted when a channel discloses
+ * a linking attribute (e.g. a Slack member email). Verification only ever happens
+ * via the control-of-both loop, which records {@link AGENTIC_VERIFIED_WEB_ID}.
+ */
+export declare const AGENTIC_CANDIDATE_PERSON = "https://w3id.org/jeswr/agentic#candidatePerson";
+/** The VERIFIED WebID recorded by the control-of-both verification event (M2-DESIGN.md §4.3). */
+export declare const AGENTIC_VERIFIED_WEB_ID = "https://w3id.org/jeswr/agentic#verifiedWebId";
+/** The opaque model tag on an LLM interpretation activity (LEGACY-INTEROP.md §3b). */
+export declare const AGENTIC_MODEL = "https://w3id.org/jeswr/agentic#model";
+/** The interpretation-pipeline status of an imported resource (M2-DESIGN.md §3.6). */
+export declare const AGENTIC_INTERPRETATION_STATUS = "https://w3id.org/jeswr/agentic#interpretationStatus";
+/** `interpretationStatus` individual: the decoupled LLM pass has not yet run. */
+export declare const AGENTIC_PENDING = "https://w3id.org/jeswr/agentic#Pending";
 /** A deterministically-classified reply polarity: `"affirmative"` / `"negative"` (no standard term exists). */
 export declare const AGENTIC_REPLY_POLARITY = "https://w3id.org/jeswr/agentic#replyPolarity";
 /** Prefix map for `n3.Writer` (pretty Turtle only — has no effect on correctness). */

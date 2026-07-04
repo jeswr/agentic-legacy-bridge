@@ -17,6 +17,7 @@
  * attacker input) and every extraction is count-capped.
  */
 import type { EmailMessage } from "./email/types.js";
+import type { BridgeMessage } from "./message.js";
 import type { Interpretation } from "./reliability.js";
 /** Context for an interpretation pass. */
 export interface InterpretContext {
@@ -25,16 +26,21 @@ export interface InterpretContext {
     /** "Now", injectable so relative-date resolution is deterministic in tests. Defaults to `new Date()`. */
     readonly now?: Date;
 }
-/** The interpretation seam: message → reliability-tagged interpreted data. */
+/**
+ * The interpretation seam: message → reliability-tagged interpreted data. Takes
+ * the channel-neutral {@link BridgeMessage} (M2.0 type-widening; an M1
+ * {@link EmailMessage} is still accepted unchanged — the reference implementation
+ * reads only the fields the two shapes share).
+ */
 export interface Interpreter {
-    interpret(message: EmailMessage, ctx: InterpretContext): Interpretation[];
+    interpret(message: BridgeMessage | EmailMessage, ctx: InterpretContext): Interpretation[];
 }
 /**
  * The hermetic, deterministic reference interpreter. No model, no network — a pure
  * function of the message body + `ctx.now`.
  */
 export declare class DeterministicInterpreter implements Interpreter {
-    interpret(message: EmailMessage, ctx: InterpretContext): Interpretation[];
+    interpret(message: BridgeMessage | EmailMessage, ctx: InterpretContext): Interpretation[];
 }
 /** A ready-to-use singleton of the deterministic reference interpreter. */
 export declare const deterministicInterpreter: Interpreter;

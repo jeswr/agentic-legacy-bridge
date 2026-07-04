@@ -20,9 +20,14 @@
  * bans only bespoke *RDF* parsers). It is intentionally small: envelope headers +
  * one plain-text body, not a faithful MIME object model.
  */
+import { ChannelParseError } from "../errors.js";
 import type { EmailMessage } from "./types.js";
-/** A controlled, typed, fail-closed refusal (the only throw from {@link parseEmail}). */
-export declare class EmailParseError extends Error {
+/**
+ * A controlled, typed, fail-closed refusal (the only throw from {@link parseEmail}).
+ * Extends the channel-neutral `ChannelParseError` (M2.0) so `importInbound`'s
+ * skip-don't-abort catch is channel-agnostic; behaviour is otherwise unchanged.
+ */
+export declare class EmailParseError extends ChannelParseError {
     constructor(message: string);
 }
 /**
