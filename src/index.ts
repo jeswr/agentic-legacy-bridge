@@ -30,17 +30,19 @@
 
 export { buildOwnerOnlyAclTurtle } from "./acl.js";
 // --- canonical message (solid-chat-interop) ---
-export { emailToCanonical, serializeCanonical } from "./canonical.js";
+export { emailToCanonical, serializeCanonical, toCanonicalMessage } from "./canonical.js";
 // --- channels + orchestration ---
 export {
   type ChannelAdapter,
   type InboundRawMessage,
   InMemoryChannelAdapter,
+  parseEmailInbound,
   type ReplyTarget,
 } from "./channel.js";
 // --- rung 1: parse + represent ---
 export { EmailParseError, parseEmail } from "./email/index.js";
 export type { EmailAddress, EmailMessage } from "./email/types.js";
+export { ChannelParseError } from "./errors.js";
 export {
   type AgenticGraphOptions,
   type AgenticGraphResult,
@@ -60,6 +62,14 @@ export {
   type InterpretContext,
   type Interpreter,
 } from "./interpret.js";
+// --- the channel-neutral message shape (M2.0) ---
+export {
+  asBridgeMessage,
+  type BridgeMessage,
+  type BridgeSender,
+  isBridgeMessage,
+  toBridgeMessage,
+} from "./message.js";
 // --- rung 4: negotiation ---
 export {
   asChannel,
@@ -109,6 +119,8 @@ export {
   normalizeEmailAddress,
   safeHttpIri,
   safeMailtoIri,
+  safeMediaType,
+  safeTelIri,
   sanitizeText,
 } from "./safe-iri.js";
 export { addSenderPerson, personIriFor, type SenderOptions, type SenderResult } from "./sender.js";

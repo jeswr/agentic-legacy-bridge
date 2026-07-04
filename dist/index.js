@@ -29,21 +29,24 @@
  */
 export { buildOwnerOnlyAclTurtle } from "./acl.js";
 // --- canonical message (solid-chat-interop) ---
-export { emailToCanonical, serializeCanonical } from "./canonical.js";
+export { emailToCanonical, serializeCanonical, toCanonicalMessage } from "./canonical.js";
 // --- channels + orchestration ---
-export { InMemoryChannelAdapter, } from "./channel.js";
+export { InMemoryChannelAdapter, parseEmailInbound, } from "./channel.js";
 // --- rung 1: parse + represent ---
 export { EmailParseError, parseEmail } from "./email/index.js";
+export { ChannelParseError } from "./errors.js";
 export { buildAgenticGraph, } from "./graph.js";
 export { importInbound, } from "./import.js";
 // --- rung 2: interpret with reliability ---
 export { DeterministicInterpreter, deterministicInterpreter, extractIsoDateTimes, extractRelativeMeetings, } from "./interpret.js";
+// --- the channel-neutral message shape (M2.0) ---
+export { asBridgeMessage, isBridgeMessage, toBridgeMessage, } from "./message.js";
 // --- rung 4: negotiation ---
 export { asChannel, CHANNEL_EXTENSION_URI, CHANNEL_PREFERENCE, CHANNELS_HEADER, decideUpgrade, detectBridgeCapability, highestMutualChannel, REPLY_HEADER, } from "./negotiate.js";
 export { addInterpretation, clampConfidence, classifyReliability, DEFAULT_THRESHOLDS, } from "./reliability.js";
 // --- rung 3: structured reply ---
 export { buildReply, htmlSafeJson, } from "./reply.js";
-export { base64Url, canonicalContainer, isValidEmailAddress, isWithinBase, mintUrn, normalizeEmailAddress, safeHttpIri, safeMailtoIri, sanitizeText, } from "./safe-iri.js";
+export { base64Url, canonicalContainer, isValidEmailAddress, isWithinBase, mintUrn, normalizeEmailAddress, safeHttpIri, safeMailtoIri, safeMediaType, safeTelIri, sanitizeText, } from "./safe-iri.js";
 export { addSenderPerson, personIriFor } from "./sender.js";
 // --- vocabulary ---
 export * as vocab from "./vocab.js";

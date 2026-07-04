@@ -10,18 +10,19 @@
  * digest and, when known, a `schema:url` link to that resource.
  */
 import type { EmailMessage } from "./email/types.js";
+import { type BridgeMessage } from "./message.js";
 import { type Interpretation } from "./reliability.js";
 /** Options for {@link buildAgenticGraph}. */
 export interface AgenticGraphOptions {
-    /** The parsed inbound message. */
-    readonly message: EmailMessage;
+    /** The parsed inbound message (channel-neutral, or an M1 `EmailMessage` unchanged). */
+    readonly message: BridgeMessage | EmailMessage;
     /** The channel this arrived on (e.g. `"email"`). Control-stripped when written. */
     readonly channel: string;
     /** The resource IRI this graph is served at (interpreted subjects mint fragments under it). */
     readonly docIri: string;
     /** The minted raw-message anchor IRI (a `urn:agentic:raw:…`, safe by construction). */
     readonly rawMessageIri: string;
-    /** The media type of the stored raw bytes (default `message/rfc822`). */
+    /** The media type of the stored raw bytes (default: the message's own; `message/rfc822` last). */
     readonly rawMediaType?: string;
     /** The http(s) IRI where the byte-exact raw resource is stored, when known. */
     readonly rawResourceIri?: string;

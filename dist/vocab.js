@@ -91,6 +91,21 @@ export const AGENTIC_IDENTITY_STATUS = `${AGENTIC}identityStatus`;
 export const AGENTIC_CANDIDATE_WEB_ID = `${AGENTIC}candidateWebId`;
 /** The CLAIMED (unverified in M1) DKIM signing domain from the message's DKIM-Signature header. */
 export const AGENTIC_DKIM_DOMAIN_CLAIM = `${AGENTIC}dkimDomainClaim`;
+/**
+ * A cross-CHANNEL person-node HINT edge between person URNs (M2-DESIGN.md §1.4) —
+ * a candidate, never a merge (never `owl:sameAs`), minted when a channel discloses
+ * a linking attribute (e.g. a Slack member email). Verification only ever happens
+ * via the control-of-both loop, which records {@link AGENTIC_VERIFIED_WEB_ID}.
+ */
+export const AGENTIC_CANDIDATE_PERSON = `${AGENTIC}candidatePerson`;
+/** The VERIFIED WebID recorded by the control-of-both verification event (M2-DESIGN.md §4.3). */
+export const AGENTIC_VERIFIED_WEB_ID = `${AGENTIC}verifiedWebId`;
+/** The opaque model tag on an LLM interpretation activity (LEGACY-INTEROP.md §3b). */
+export const AGENTIC_MODEL = `${AGENTIC}model`;
+/** The interpretation-pipeline status of an imported resource (M2-DESIGN.md §3.6). */
+export const AGENTIC_INTERPRETATION_STATUS = `${AGENTIC}interpretationStatus`;
+/** `interpretationStatus` individual: the decoupled LLM pass has not yet run. */
+export const AGENTIC_PENDING = `${AGENTIC}Pending`;
 /** A deterministically-classified reply polarity: `"affirmative"` / `"negative"` (no standard term exists). */
 export const AGENTIC_REPLY_POLARITY = `${AGENTIC}replyPolarity`;
 /** Prefix map for `n3.Writer` (pretty Turtle only — has no effect on correctness). */

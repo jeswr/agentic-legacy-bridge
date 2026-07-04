@@ -4,10 +4,16 @@
  * into a Solid pod (LEGACY-INTEROP.md §7 `importInbound`).
  *
  * Per message it writes three resources under an owner-locked container:
- *  - `<slug>.eml`      — the byte-exact raw bytes (the provenance anchor);
+ *  - `<slug>.eml`      — the byte-exact raw bytes (the provenance anchor; the
+ *                        extension follows the channel's `rawMediaType` — `.eml`
+ *                        for `message/rfc822`, `.json` for event payloads);
  *  - `<slug>.ttl`      — the agentic graph (raw anchor + sender Person + the §3b
  *                        reliability-tagged interpretations);
  *  - `<slug>.chat.ttl` — the `@jeswr/solid-chat-interop` CanonicalMessage (for /chat).
+ *
+ * M2.0: the pipeline is CHANNEL-NEUTRAL — each raw message is parsed by the
+ * adapter's own hardened `parse` into a `BridgeMessage` (email is the first
+ * adapter, behaving exactly as M1's hard-coded `parseEmail` did).
  *
  * The owner-only ACL is written FIRST (the container is locked BEFORE any content
  * lands in it — the fail-closed precedent). Every write goes through the caller's
@@ -17,8 +23,8 @@
  * write failure THROWS (never silently loses data).
  */
 import type { ChannelAdapter } from "./channel.js";
-import { type EmailMessage } from "./email/index.js";
 import { type Interpreter } from "./interpret.js";
+import type { BridgeMessage } from "./message.js";
 /** Options for {@link importInbound}. */
 export interface ImportInboundOptions {
     /** The channel adapter to pull inbound messages from. */
@@ -40,7 +46,7 @@ export interface ImportInboundOptions {
     /** The ODRL mandate the interpreting agent acts under (`prov:hadPlan`). */
     readonly mandateIri?: string;
     /** Supply UNVERIFIED candidate WebIDs for a sender (already discovered elsewhere). */
-    readonly candidateWebIdsFor?: (message: EmailMessage) => readonly string[] | undefined;
+    readonly candidateWebIdsFor?: (message: BridgeMessage) => readonly string[] | undefined;
     /** Write the owner-only ACL first (default `true`). */
     readonly writeAcl?: boolean;
     /** "Now" for the interpreter's relative-date resolution (deterministic tests). */

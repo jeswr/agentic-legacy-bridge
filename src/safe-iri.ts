@@ -194,3 +194,39 @@ export function asUrn(value: unknown): string | undefined {
 export function mintUrn(kind: "person" | "raw" | "interp", key: string): string {
   return `urn:agentic:${kind}:${base64Url(key)}`;
 }
+
+/**
+ * Strict E.164 shape: `+` then 7–15 digits, first digit non-zero (ITU-T E.164 caps
+ * the international number at 15 digits). Deliberately NO letters, spaces,
+ * separators, or extensions — we would rather drop an exotic formatting than mint
+ * an ambiguous `tel:` identity IRI from attacker-controlled digits.
+ */
+const E164 = /^\+[1-9]\d{6,14}$/;
+
+/**
+ * Build an injection-safe `tel:` IRI (RFC 3966 global-number form) for an
+ * UNTRUSTED phone-number handle, or `undefined` if it is not strict E.164
+ * (M2-DESIGN.md §1.2 — the `safeMailtoIri` sibling for phone-keyed channels like
+ * WhatsApp). The accepted alphabet is `+` and digits only, so the result carries
+ * no IRIREF-forbidden char by construction. NEVER pass a raw number to `namedNode`.
+ */
+export function safeTelIri(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const v = value.trim();
+  if (!E164.test(v)) return undefined;
+  return `tel:${v}`;
+}
+
+/**
+ * Accept only a plausible lower-cased `type/subtype` media type (RFC 6838 token
+ * shape, length-capped) from an UNTRUSTED value; else `undefined`. Used before a
+ * media type becomes a stored-literal or an HTTP `content-type` — a malformed
+ * value falls back to the caller's safe default, never travels verbatim.
+ */
+export function safeMediaType(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const v = sanitizeText(value).trim().toLowerCase();
+  return /^[a-z0-9][a-z0-9!#$&^_.+-]{0,60}\/[a-z0-9][a-z0-9!#$&^_.+-]{0,60}$/.test(v)
+    ? v
+    : undefined;
+}

@@ -27,17 +27,19 @@
  * @packageDocumentation
  */
 export { buildOwnerOnlyAclTurtle } from "./acl.js";
-export { emailToCanonical, serializeCanonical } from "./canonical.js";
-export { type ChannelAdapter, type InboundRawMessage, InMemoryChannelAdapter, type ReplyTarget, } from "./channel.js";
+export { emailToCanonical, serializeCanonical, toCanonicalMessage } from "./canonical.js";
+export { type ChannelAdapter, type InboundRawMessage, InMemoryChannelAdapter, parseEmailInbound, type ReplyTarget, } from "./channel.js";
 export { EmailParseError, parseEmail } from "./email/index.js";
 export type { EmailAddress, EmailMessage } from "./email/types.js";
+export { ChannelParseError } from "./errors.js";
 export { type AgenticGraphOptions, type AgenticGraphResult, buildAgenticGraph, } from "./graph.js";
 export { type ImportInboundOptions, type ImportInboundResult, importInbound, } from "./import.js";
 export { DeterministicInterpreter, deterministicInterpreter, extractIsoDateTimes, extractRelativeMeetings, type InterpretContext, type Interpreter, } from "./interpret.js";
+export { asBridgeMessage, type BridgeMessage, type BridgeSender, isBridgeMessage, toBridgeMessage, } from "./message.js";
 export { asChannel, type BridgeCapability, CHANNEL_EXTENSION_URI, CHANNEL_PREFERENCE, CHANNELS_HEADER, type Channel, decideUpgrade, detectBridgeCapability, highestMutualChannel, type InboundSignals, REPLY_HEADER, type UpgradeDecision, type UpgradeOffer, type UpgradeResponse, } from "./negotiate.js";
 export { addInterpretation, type Calibration, clampConfidence, classifyReliability, DEFAULT_THRESHOLDS, type Interpretation, type InterpretationGraphContext, type InterpretationMethod, type InterpretationObject, type ReliabilityDecision, type ReliabilityThresholds, } from "./reliability.js";
 export { type BuildReplyOptions, type BuiltReply, buildReply, htmlSafeJson, type MimePart, type OfferedTime, type ReplySigner, } from "./reply.js";
-export { base64Url, canonicalContainer, isValidEmailAddress, isWithinBase, mintUrn, normalizeEmailAddress, safeHttpIri, safeMailtoIri, sanitizeText, } from "./safe-iri.js";
+export { base64Url, canonicalContainer, isValidEmailAddress, isWithinBase, mintUrn, normalizeEmailAddress, safeHttpIri, safeMailtoIri, safeMediaType, safeTelIri, sanitizeText, } from "./safe-iri.js";
 export { addSenderPerson, personIriFor, type SenderOptions, type SenderResult } from "./sender.js";
 export * as vocab from "./vocab.js";
 //# sourceMappingURL=index.d.ts.map
