@@ -143,6 +143,93 @@ describe("createHttpLlmExtractor — transport hardening", () => {
     await expect(extract(TASK)).rejects.toThrow(/byte cap/);
   });
 
+  it("REJECTS a stream-less (body:null) response fail-closed, never buffering it via .text()", async () => {
+    // An injected / nonstandard fetch whose Response exposes NO readable body stream must
+    // be refused: `readBounded` cannot enforce the byte cap DURING the read, and falling
+    // back to `response.text()` would buffer the whole (possibly unbounded) body first.
+    // Prove `.text()` is never called — the unbounded body is never allocated.
+    const textSpy = vi.fn(async () => "x".repeat(50_000));
+    const fn = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      redirected: false,
+      body: null,
+      text: textSpy,
+    })) as unknown as typeof globalThis.fetch;
+    const extract = createHttpLlmExtractor({
+      endpoint: ENDPOINT,
+      model: "m",
+      fetch: fn,
+      maxResponseBytes: 100,
+    });
+    await expect(extract(TASK)).rejects.toThrow(/not a bounded readable stream/);
+    expect(textSpy).not.toHaveBeenCalled();
+  });
+
+  it("REJECTS a response whose body lacks getReader (not a stream) fail-closed", async () => {
+    // The second stream-less shape: a `body` object present but WITHOUT a `getReader`
+    // method (so it cannot be read chunk-by-chunk under the cap) is likewise refused.
+    const textSpy = vi.fn(async () => "x".repeat(50_000));
+    const fn = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      redirected: false,
+      body: { notAStream: true },
+      text: textSpy,
+    })) as unknown as typeof globalThis.fetch;
+    const extract = createHttpLlmExtractor({ endpoint: ENDPOINT, model: "m", fetch: fn });
+    await expect(extract(TASK)).rejects.toThrow(/not a bounded readable stream/);
+    expect(textSpy).not.toHaveBeenCalled();
+  });
+
+  it("the bounded STREAMING path still enforces the byte cap (multi-chunk over-cap body rejected)", async () => {
+    // The positive counterpart: a REAL ReadableStream body that streams past the cap is
+    // aborted mid-read — the cap is enforced on the cumulative encoded byte count, chunk
+    // by chunk, so it fires BEFORE the whole body is buffered.
+    const encoder = new TextEncoder();
+    const fn = vi.fn(async () => {
+      const stream = new ReadableStream<Uint8Array>({
+        start(controller) {
+          for (let i = 0; i < 20; i++) controller.enqueue(encoder.encode("y".repeat(50)));
+          controller.close();
+        },
+      });
+      return new Response(stream, { status: 200 });
+    }) as unknown as typeof globalThis.fetch;
+    const extract = createHttpLlmExtractor({
+      endpoint: ENDPOINT,
+      model: "m",
+      fetch: fn,
+      maxResponseBytes: 100,
+    });
+    await expect(extract(TASK)).rejects.toThrow(/byte cap/);
+  });
+
+  it("the bounded STREAMING path accepts an under-cap multi-chunk body", async () => {
+    // And the happy path: a chunked stream UNDER the cap is decoded and returned intact.
+    const encoder = new TextEncoder();
+    const content = '{"items":[]}';
+    const wire = JSON.stringify({ choices: [{ message: { content } }] });
+    const fn = vi.fn(async () => {
+      const bytes = encoder.encode(wire);
+      const stream = new ReadableStream<Uint8Array>({
+        start(controller) {
+          // Split into small chunks to exercise the accumulate-and-merge path.
+          for (let i = 0; i < bytes.length; i += 4) controller.enqueue(bytes.slice(i, i + 4));
+          controller.close();
+        },
+      });
+      return new Response(stream, { status: 200 });
+    }) as unknown as typeof globalThis.fetch;
+    const extract = createHttpLlmExtractor({
+      endpoint: ENDPOINT,
+      model: "m",
+      fetch: fn,
+      maxResponseBytes: 1000,
+    });
+    await expect(extract(TASK)).resolves.toBe(content);
+  });
+
   it("throws a shape error (never crashes) on a malformed completion", async () => {
     const fn = vi.fn(
       async () => new Response(JSON.stringify({ nope: true }), { status: 200 }),

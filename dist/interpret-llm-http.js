@@ -54,14 +54,14 @@ function assertEndpoint(endpoint, allowLocal) {
 async function readBounded(response, maxBytes) {
     const body = response.body;
     if (body === null || typeof body.getReader !== "function") {
-        // The guarded default fetch always exposes a body STREAM (so this fallback is only
-        // reached under an injected fetch). Enforce the cap on ENCODED bytes, not UTF-16
-        // code units, once read.
-        const text = await response.text();
-        if (new TextEncoder().encode(text).byteLength > maxBytes) {
-            throw new Error("model response exceeded the byte cap");
-        }
-        return text;
+        // FAIL-CLOSED: with no readable body stream we cannot enforce the cap DURING the
+        // read. Falling back to `response.text()` would buffer the WHOLE (possibly
+        // unbounded) body FIRST — and then re-allocate it a second time via TextEncoder —
+        // before the cap could be checked, so an injected or nonstandard fetch could force
+        // an unbounded allocation. The guarded default fetch ALWAYS exposes a body stream,
+        // so a missing/stream-less body only occurs under an injected fetch; REFUSE it
+        // rather than read it unbounded (the cap is only meaningful mid-stream).
+        throw new Error("model response body is not a bounded readable stream — refused");
     }
     const reader = body.getReader();
     const chunks = [];
