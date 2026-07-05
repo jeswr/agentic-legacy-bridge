@@ -8,22 +8,40 @@
  * logic lives here — it is all in the verified core.
  */
 
-import { createWebhookHandler, type WebhookHandlerOptions } from "./handler.js";
+import { readAllBounded } from "../stream-limit.js";
+import {
+  createWebhookHandler,
+  DEFAULT_MAX_BODY_BYTES,
+  type WebhookHandlerOptions,
+} from "./handler.js";
 import type { WebhookResponse } from "./request.js";
 
 /**
  * Build a WinterCG `fetch` handler from the same {@link WebhookHandlerOptions}. The
- * body is read verbatim via `request.arrayBuffer()` (so signature verification runs
- * over the EXACT bytes the channel signed — never a re-serialised JSON round-trip),
- * and header/query maps are built null-prototype-safe (a hostile `__proto__` header
- * name becomes an ordinary own property, never touches the prototype chain).
+ * body is read verbatim (so signature verification runs over the EXACT bytes the
+ * channel signed — never a re-serialised JSON round-trip) but BOUNDED: an advertised
+ * `Content-Length` over the cap is rejected `413` before reading, and the stream read
+ * aborts the moment it exceeds the cap — an oversized unauthenticated request can never
+ * force full body buffering (defence BEFORE the handler's own size gate). Header/query
+ * maps are built null-prototype-safe (a hostile `__proto__` header name becomes an
+ * ordinary own property, never touches the prototype chain).
  */
 export function createFetchWebhookHandler(
   options: WebhookHandlerOptions,
 ): (request: Request) => Promise<Response> {
   const handler = createWebhookHandler(options);
+  const maxBodyBytes = options.maxBodyBytes ?? DEFAULT_MAX_BODY_BYTES;
   return async (request: Request): Promise<Response> => {
-    const rawBody = new Uint8Array(await request.arrayBuffer());
+    // Reject an over-cap Content-Length before reading a single byte.
+    const declaredLength = Number(request.headers.get("content-length"));
+    if (Number.isFinite(declaredLength) && declaredLength > maxBodyBytes) {
+      return new Response(null, { status: 413 });
+    }
+    // Read the body bounded — abort (413) the moment it exceeds the cap.
+    const rawBody = await readAllBounded(request.body, maxBodyBytes);
+    if (rawBody === undefined) {
+      return new Response(null, { status: 413 });
+    }
 
     const headers: Record<string, string> = Object.create(null);
     request.headers.forEach((value, key) => {

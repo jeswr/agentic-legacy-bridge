@@ -111,8 +111,12 @@ async function putCreateOnly(
   });
   assertNoRedirect(res, "PUT", url);
   // A failed `If-None-Match: *` precondition (the resource already exists) is the
-  // idempotent replay path — NOT an error. Solid/CSS answers 412; some servers 409.
-  if (res.status === 412 || res.status === 409) return "exists";
+  // idempotent replay path — NOT an error. The spec status for a failed precondition
+  // is 412 (Solid/CSS); we treat ONLY 412 as already-imported. A 409 Conflict can be a
+  // REAL write failure (a container conflict), so it must NOT be silently swallowed as
+  // "exists" (that would drop a message with a 200) — it falls through to throw, so the
+  // handler answers 500 and the platform retries.
+  if (res.status === 412) return "exists";
   if (!res.ok) {
     throw new Error(`pod write failed: PUT ${url} -> ${res.status} ${res.statusText}`);
   }

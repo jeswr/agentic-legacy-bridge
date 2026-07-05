@@ -9,10 +9,13 @@
 import { type WebhookHandlerOptions } from "./handler.js";
 /**
  * Build a WinterCG `fetch` handler from the same {@link WebhookHandlerOptions}. The
- * body is read verbatim via `request.arrayBuffer()` (so signature verification runs
- * over the EXACT bytes the channel signed — never a re-serialised JSON round-trip),
- * and header/query maps are built null-prototype-safe (a hostile `__proto__` header
- * name becomes an ordinary own property, never touches the prototype chain).
+ * body is read verbatim (so signature verification runs over the EXACT bytes the
+ * channel signed — never a re-serialised JSON round-trip) but BOUNDED: an advertised
+ * `Content-Length` over the cap is rejected `413` before reading, and the stream read
+ * aborts the moment it exceeds the cap — an oversized unauthenticated request can never
+ * force full body buffering (defence BEFORE the handler's own size gate). Header/query
+ * maps are built null-prototype-safe (a hostile `__proto__` header name becomes an
+ * ordinary own property, never touches the prototype chain).
  */
 export declare function createFetchWebhookHandler(options: WebhookHandlerOptions): (request: Request) => Promise<Response>;
 //# sourceMappingURL=fetch-adapter.d.ts.map

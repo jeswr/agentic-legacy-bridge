@@ -189,6 +189,15 @@ describe("Slack webhook handler — end to end", () => {
     expect(events.some((e) => e.kind === "error")).toBe(true);
   });
 
+  it("returns 500 (not a dropped 200) when a pod PUT answers 409 Conflict", async () => {
+    const body = slackBody("conflict");
+    const conflicting = (async () => new Response(null, { status: 409 })) as typeof fetch;
+    const res = await slackHandler(conflicting)(
+      req({ headers: slackSig(body), rawBody: enc(body) }),
+    );
+    expect(res.status).toBe(500);
+  });
+
   it("rejects GET (405) — Slack has no GET registration", async () => {
     const { fetchImpl } = recordingFetch();
     const res = await slackHandler(fetchImpl)(req({ method: "GET", rawBody: new Uint8Array(0) }));

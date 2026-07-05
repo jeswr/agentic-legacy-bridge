@@ -156,6 +156,7 @@ export {
 } from "./slack.js";
 export {
   type CardDiscovery,
+  canonicalPersonKey,
   createGuardedUpgradeTransport,
   createPodRelationshipStore,
   decodeUpgradeResponse,

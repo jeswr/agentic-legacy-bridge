@@ -65,6 +65,56 @@ describe("createFetchWebhookHandler — WinterCG Request/Response", () => {
     expect(res.status).toBe(401);
   });
 
+  it("rejects an over-cap Content-Length with 413 WITHOUT reading the body", async () => {
+    let fetched = false;
+    const handler = createFetchWebhookHandler({
+      channel: { channel: "slack", signingSecret: SLACK_SECRET },
+      container: CONTAINER,
+      writeFetch: (async () => {
+        fetched = true;
+        return new Response(null, { status: 201 });
+      }) as typeof fetch,
+      maxBodyBytes: 100,
+      now: () => NOW_SEC * 1000,
+    });
+    const res = await handler(
+      new Request("https://svc.example/webhook/slack", {
+        method: "POST",
+        headers: { ...slackSig("x".repeat(500)), "content-length": "500" },
+        body: "x".repeat(500),
+      }),
+    );
+    expect(res.status).toBe(413);
+    expect(fetched).toBe(false);
+  });
+
+  it("aborts a streamed body that exceeds the cap (413)", async () => {
+    const handler = createFetchWebhookHandler({
+      channel: { channel: "slack", signingSecret: SLACK_SECRET },
+      container: CONTAINER,
+      writeFetch: okFetch(),
+      maxBodyBytes: 100,
+      now: () => NOW_SEC * 1000,
+    });
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new Uint8Array(500));
+        controller.close();
+      },
+    });
+    const res = await handler(
+      // A streamed body has no Content-Length → the bounded read must abort at the cap.
+      // `duplex` is required by Node's fetch for a stream body (not yet in the DOM types).
+      new Request("https://svc.example/webhook/slack", {
+        method: "POST",
+        headers: slackSig(""),
+        body: stream,
+        duplex: "half",
+      } as unknown as RequestInit),
+    );
+    expect(res.status).toBe(413);
+  });
+
   it("echoes the Meta GET registration challenge from the query string", async () => {
     const handler = createFetchWebhookHandler({
       channel: { channel: "whatsapp", appSecret: "s", verifyToken: VERIFY_TOKEN },

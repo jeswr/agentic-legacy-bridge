@@ -93,7 +93,33 @@ describe("orchestration — SSRF gating (verified endpoints only)", () => {
   });
 });
 
+describe("orchestration — persistence keys on the CANONICAL personIri", () => {
+  it("progresses the ratchet when the caller uses a non-canonical HTTP personIri", async () => {
+    const store = new InMemoryRelationshipStore();
+    // A default-port HTTP IRI canonicalises (safeHttpIri drops :443) — load + save MUST
+    // still resolve to the same key, or the state machine gets stuck re-creating initial.
+    const nonCanonical = "https://carol.example:443/card#me";
+    const b = await recordBridgeDetected(store, nonCanonical, AT);
+    expect(b.ok).toBe(true);
+    // A second advance with the SAME non-canonical arg must find the bridge-detected
+    // state (not re-create legacy-only, which would make identity-verified illegal).
+    const v = await recordIdentityVerified(store, nonCanonical, WEBID, AT);
+    expect(v.ok).toBe(true);
+    const loaded = await store.load(nonCanonical);
+    expect(loaded?.state.state).toBe("identity-verified");
+    // The persisted personIri is the canonical form.
+    expect(loaded?.state.personIri).toBe("https://carol.example/card#me");
+  });
+});
+
 describe("createGuardedUpgradeTransport — https-only, no payload-picked target", () => {
+  it("aborts + throws when the peer response exceeds the size cap", async () => {
+    const bigBody = "x".repeat(2000);
+    const fetchImpl = (async () => new Response(bigBody, { status: 200 })) as typeof fetch;
+    const transport = createGuardedUpgradeTransport({ fetch: fetchImpl, maxResponseBytes: 100 });
+    await expect(transport({ target: CARD, payload: {} })).rejects.toThrow(/size cap/);
+  });
+
   it("refuses a non-https target before any fetch", async () => {
     const fetchSpy = vi.fn();
     const transport = createGuardedUpgradeTransport({ fetch: fetchSpy as unknown as typeof fetch });

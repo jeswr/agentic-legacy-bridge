@@ -47,6 +47,17 @@ export interface RelationshipStore {
 export declare class RelationshipConflictError extends Error {
     constructor(message: string);
 }
+/**
+ * The CANONICAL storage key for a counterparty — the SAME canonicalisation the state
+ * machine applies to `personIri` ({@link initialRelationship} uses `asUrn ?? safeHttpIri`).
+ * A store MUST key `load` AND `save` on this, not the raw argument: otherwise a caller
+ * that loads with a non-canonical HTTP IRI (e.g. a default-port / uppercase-host form)
+ * misses the state saved under the canonical `state.personIri`, and the ratchet is stuck
+ * re-creating the initial state (a roborev M2.4 finding). Idempotent (canonical → itself);
+ * falls back to the raw string only for a value neither canonicaliser accepts (which the
+ * state machine would reject upstream anyway).
+ */
+export declare function canonicalPersonKey(personIri: string): string;
 /** A hermetic in-memory {@link RelationshipStore} (tests + single-process) with CAS. */
 export declare class InMemoryRelationshipStore implements RelationshipStore {
     private readonly byPerson;

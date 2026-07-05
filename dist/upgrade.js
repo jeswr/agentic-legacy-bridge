@@ -27,7 +27,8 @@
  */
 import { createNodeGuardedFetch } from "@jeswr/guarded-fetch/node";
 import { assertNoRedirect, assertWritableUrl } from "./import.js";
-import { base64Url, canonicalContainer, safeHttpIri } from "./safe-iri.js";
+import { asUrn, base64Url, canonicalContainer, safeHttpIri } from "./safe-iri.js";
+import { readAllBounded } from "./stream-limit.js";
 import { initialRelationship, parseRelationship, serializeRelationship, transition, } from "./upgrade-state.js";
 /** Thrown by a {@link RelationshipStore.save} whose optimistic precondition failed. */
 export class RelationshipConflictError extends Error {
@@ -36,21 +37,35 @@ export class RelationshipConflictError extends Error {
         this.name = "RelationshipConflictError";
     }
 }
+/**
+ * The CANONICAL storage key for a counterparty — the SAME canonicalisation the state
+ * machine applies to `personIri` ({@link initialRelationship} uses `asUrn ?? safeHttpIri`).
+ * A store MUST key `load` AND `save` on this, not the raw argument: otherwise a caller
+ * that loads with a non-canonical HTTP IRI (e.g. a default-port / uppercase-host form)
+ * misses the state saved under the canonical `state.personIri`, and the ratchet is stuck
+ * re-creating the initial state (a roborev M2.4 finding). Idempotent (canonical → itself);
+ * falls back to the raw string only for a value neither canonicaliser accepts (which the
+ * state machine would reject upstream anyway).
+ */
+export function canonicalPersonKey(personIri) {
+    return asUrn(personIri) ?? safeHttpIri(personIri) ?? personIri;
+}
 /** A hermetic in-memory {@link RelationshipStore} (tests + single-process) with CAS. */
 export class InMemoryRelationshipStore {
     byPerson = new Map();
     load(personIri) {
-        const entry = this.byPerson.get(personIri);
+        const entry = this.byPerson.get(canonicalPersonKey(personIri));
         return Promise.resolve(entry === undefined ? undefined : { state: entry.state, version: String(entry.version) });
     }
     save(state, expectedVersion) {
-        const entry = this.byPerson.get(state.personIri);
+        const key = canonicalPersonKey(state.personIri);
+        const entry = this.byPerson.get(key);
         const currentVersion = entry === undefined ? undefined : String(entry.version);
         if (currentVersion !== expectedVersion) {
             return Promise.reject(new RelationshipConflictError(`relationship save conflict for ${state.personIri} (expected ${expectedVersion ?? "<new>"}, have ${currentVersion ?? "<new>"}).`));
         }
         const nextVersion = (entry?.version ?? 0) + 1;
-        this.byPerson.set(state.personIri, { state, version: nextVersion });
+        this.byPerson.set(key, { state, version: nextVersion });
         return Promise.resolve();
     }
 }
@@ -69,7 +84,10 @@ export function createPodRelationshipStore(options) {
     }
     const writeFetch = options.writeFetch;
     const readFetch = options.readFetch ?? options.writeFetch;
-    const urlFor = (personIri) => assertWritableUrl(`${container}rel-${base64Url(personIri)}.ttl`, container);
+    // Canonicalise the personIri to the SAME key the state machine uses, so `load` and
+    // `save` (which is keyed on the canonical `state.personIri`) always resolve to the
+    // SAME resource URL (a roborev M2.4 finding — see canonicalPersonKey).
+    const urlFor = (personIri) => assertWritableUrl(`${container}rel-${base64Url(canonicalPersonKey(personIri))}.ttl`, container);
     return {
         async load(personIri) {
             const url = urlFor(personIri);
@@ -102,7 +120,10 @@ export function createPodRelationshipStore(options) {
                 redirect: "manual",
             });
             assertNoRedirect(res, "PUT", url);
-            if (res.status === 412 || res.status === 409) {
+            // The precondition-failed status for If-Match / If-None-Match is 412; treat ONLY
+            // 412 as an optimistic-concurrency conflict. A 409 is an ambiguous real failure →
+            // the generic error path, not a silent conflict.
+            if (res.status === 412) {
                 throw new RelationshipConflictError(`relationship save conflict for ${state.personIri} (precondition failed on PUT ${url}).`);
             }
             if (!res.ok) {
@@ -139,9 +160,14 @@ export function createGuardedUpgradeTransport(options = {}) {
         if (!res.ok) {
             throw new Error(`upgrade transport failed: ${res.status} ${res.statusText}`);
         }
-        const text = (await res.text()).slice(0, maxResponseBytes);
+        // Read the response BOUNDED — abort once it exceeds the cap, so a peer cannot force
+        // full buffering (the guarded fetch also caps, this is defence-in-depth).
+        const bytes = await readAllBounded(res.body, maxResponseBytes);
+        if (bytes === undefined) {
+            throw new Error("upgrade transport: response exceeded the size cap.");
+        }
         try {
-            return JSON.parse(text);
+            return JSON.parse(new TextDecoder().decode(bytes));
         }
         catch {
             return undefined; // an unparseable response decodes fail-closed to a decline

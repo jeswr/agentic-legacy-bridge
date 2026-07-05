@@ -141,6 +141,22 @@ describe("writeMessageCreateOnly — create-only + idempotency", () => {
     ).rejects.toThrow(/pod write failed/);
   });
 
+  it("does NOT swallow a 409 Conflict as already-imported (only 412 is idempotent)", async () => {
+    const raw = slackEvent("conflict");
+    const message = slackEventToBridgeMessage(enc(raw));
+    const { fetchImpl } = recordingFetch({ fail: () => 409 });
+    // A 409 is a real failure → must throw (so the handler answers 500 + the platform
+    // retries), never a silent "exists" that drops the message with a 200.
+    await expect(
+      writeMessageCreateOnly({
+        message,
+        raw: enc(raw),
+        container: CONTAINER,
+        writeFetch: fetchImpl,
+      }),
+    ).rejects.toThrow(/pod write failed/);
+  });
+
   it("refuses a redirect on a pod write (fail-closed)", async () => {
     const raw = slackEvent("redir");
     const message = slackEventToBridgeMessage(enc(raw));
