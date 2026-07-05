@@ -28,7 +28,7 @@
  */
 import { canonicalContainer } from "../safe-iri.js";
 import { SlackParseError, slackEventToBridgeMessage } from "../slack.js";
-import { WhatsAppParseError, waMessageToBridgeMessage, whatsappMessageCount } from "../whatsapp.js";
+import { MAX_MESSAGES_PER_DELIVERY, parseWhatsAppDelivery, WhatsAppParseError, } from "../whatsapp.js";
 import { OK, PAYLOAD_TOO_LARGE, UNAUTHORIZED, } from "./request.js";
 import { metaVerificationChallenge, verifyMetaSignature } from "./verify-meta.js";
 import { verifySlackSignature } from "./verify-slack.js";
@@ -43,6 +43,14 @@ const METHOD_NOT_ALLOWED = Object.freeze({ status: 405 });
 const FORBIDDEN = Object.freeze({ status: 403 });
 /** A 500 — a transient operational failure (e.g. a pod write error); platform retries. */
 const INTERNAL_ERROR = Object.freeze({ status: 500 });
+/**
+ * A 422 — a verified delivery whose message fan-out exceeds the per-delivery cap
+ * ({@link WebhookHandlerOptions.maxMessagesPerDelivery}). Distinct from the 413 byte
+ * cap: the body is within the byte budget and well-formed, but carries an implausible
+ * number of messages, so it is refused fail-closed (bounded), never fanned out in an
+ * unbounded loop. A genuine WhatsApp delivery is a small handful of messages.
+ */
+const UNPROCESSABLE_TOO_MANY_MESSAGES = Object.freeze({ status: 422 });
 /**
  * Build a stateless webhook handler for one channel. Validates the config fail-closed
  * at CONSTRUCTION (a blank secret, verify token, or container is a deployment bug that
@@ -71,6 +79,11 @@ export function createWebhookHandler(options) {
         }
     }
     const maxBodyBytes = options.maxBodyBytes ?? DEFAULT_MAX_BODY_BYTES;
+    if (options.maxMessagesPerDelivery !== undefined &&
+        (!Number.isInteger(options.maxMessagesPerDelivery) || options.maxMessagesPerDelivery <= 0)) {
+        throw new Error("webhook: maxMessagesPerDelivery must be a positive integer when supplied.");
+    }
+    const maxMessagesPerDelivery = options.maxMessagesPerDelivery ?? MAX_MESSAGES_PER_DELIVERY;
     const now = options.now ?? Date.now;
     const emit = (event) => {
         options.onEvent?.(event);
@@ -127,7 +140,7 @@ export function createWebhookHandler(options) {
         try {
             return config.channel === "slack"
                 ? await handleSlackDelivery(rawBody, options, container, emit)
-                : await handleWhatsAppDelivery(rawBody, options, container, emit);
+                : await handleWhatsAppDelivery(rawBody, options, container, emit, maxMessagesPerDelivery);
         }
         catch {
             emit({ kind: "error", channel: config.channel });
@@ -201,16 +214,28 @@ async function handleSlackDelivery(rawBody, options, container, emit) {
     return OK;
 }
 /** Handle a verified WhatsApp POST: fan out every message in the delivery, import each. */
-async function handleWhatsAppDelivery(rawBody, options, container, emit) {
-    const count = whatsappMessageCount(rawBody);
-    if (count === 0) {
+async function handleWhatsAppDelivery(rawBody, options, container, emit, maxMessagesPerDelivery) {
+    // Parse the delivery body ONCE, then fan out by indexing into the already-parsed
+    // records (delivery.messageAt) — NOT by re-parsing the whole body per message. This
+    // is the fix for the authenticated O(messages × body-size) amplification: a ~0.9 MB
+    // signed delivery could encode hundreds of thousands of message objects, and the old
+    // per-index re-parse turned that into hundreds of thousands of full-body parses.
+    const delivery = parseWhatsAppDelivery(rawBody, maxMessagesPerDelivery);
+    // An implausibly large fan-out is refused fail-closed with a bounded 422 — never an
+    // unbounded loop. Surfaced (NOT silently dropped) via a distinct audit counter so an
+    // over-cap delivery is visible to operators.
+    if (delivery.capped) {
+        emit({ kind: "over-message-cap", channel: "whatsapp", count: delivery.total });
+        return UNPROCESSABLE_TOO_MANY_MESSAGES;
+    }
+    if (delivery.total === 0) {
         emit({ kind: "skipped", channel: "whatsapp" }); // status/receipt change, no messages → ack
         return OK;
     }
-    for (let i = 0; i < count; i++) {
+    for (let i = 0; i < delivery.total; i++) {
         let message;
         try {
-            message = waMessageToBridgeMessage(rawBody, { messageIndex: i });
+            message = delivery.messageAt(i); // parse-once: index into the resolved records
         }
         catch (err) {
             if (err instanceof WhatsAppParseError) {

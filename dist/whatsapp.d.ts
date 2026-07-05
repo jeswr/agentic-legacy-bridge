@@ -104,6 +104,20 @@ export declare const WHATSAPP_CHANNEL = "whatsapp";
 /** The media type of the byte-exact raw anchor (a Meta webhook body is JSON). */
 export declare const WHATSAPP_RAW_MEDIA_TYPE = "application/json";
 /**
+ * Hard cap on the number of `messages[]` entries fanned out from ONE WhatsApp
+ * delivery — the fan-out arity bound (M2-DESIGN.md §3.4). A genuine WhatsApp Business
+ * Cloud webhook carries a single message or a small handful; Meta does not batch
+ * hundreds of user messages into one delivery. `1000` is orders of magnitude above any
+ * realistic batch, so a delivery exceeding it is a malformed / hostile payload, not
+ * legitimate traffic. The bound exists because the byte cap alone is not enough: a
+ * ~0.9 MB signed delivery can encode hundreds of thousands of tiny message objects, so
+ * WITHOUT this cap the (authenticated) fan-out loop is unbounded relative to a bounded
+ * body — an authenticated-CPU-amplification DoS. Over the cap the service refuses the
+ * delivery fail-closed (a bounded response), it never loops (see
+ * {@link WhatsAppDelivery.capped}).
+ */
+export declare const MAX_MESSAGES_PER_DELIVERY = 1000;
+/**
  * A controlled, typed, fail-closed refusal (the only throw from
  * {@link waMessageToBridgeMessage}). Extends the channel-neutral
  * {@link ChannelParseError} (M2.0) so `importInbound`'s skip-don't-abort catch is
@@ -153,12 +167,69 @@ export declare function waIdToTelIri(waId: unknown): string | undefined;
  * {@link WhatsAppParseError} for a refused input; everything survivable degrades with
  * a `warnings` entry.
  *
+ * NOTE for FAN-OUT: to import EVERY message in a multi-message delivery, do NOT call
+ * this per index — that re-parses the whole delivery body once per message
+ * (O(messages × body-size)). Use {@link parseWhatsAppDelivery} instead: it JSON-parses
+ * the body ONCE and indexes into the resolved records. This single-message entry point
+ * stays for the adapter/`ChannelAdapter.parse` seam and a one-off select.
+ *
  * @throws {WhatsAppParseError} on an over-cap input, non-JSON / non-object body, a
  *   delivery with no importable `messages`, an out-of-range `messageIndex`, a
  *   non-text message type, a missing/invalid `id` (wamid), or a missing plain-text
  *   `text.body`.
  */
 export declare function waMessageToBridgeMessage(raw: string | Uint8Array, ctx?: WhatsAppParseContext): BridgeMessage;
+/**
+ * The PARSE-ONCE fan-out view of a raw WhatsApp Business Cloud webhook delivery — the
+ * primitive the M2.4 webhook service uses to import a multi-message delivery WITHOUT
+ * re-parsing the body once per message. {@link parseWhatsAppDelivery} JSON-parses +
+ * resolves the delivery's `messages[]` a SINGLE time; {@link WhatsAppDelivery.messageAt}
+ * then transforms one already-resolved record by index (no re-parse). Fanning a delivery
+ * of N messages out is therefore O(body-size) + O(N), never O(N × body-size).
+ */
+export interface WhatsAppDelivery {
+    /** SHA-256 hex over the EXACT raw delivery bytes — shared by every fanned-out message. */
+    readonly rawSha256: string;
+    /** Byte length of the EXACT raw delivery bytes — shared by every fanned-out message. */
+    readonly rawByteLength: number;
+    /**
+     * The number of `messages[]` entries resolved from the delivery — `0` for a
+     * non-JSON / non-object / over-byte-cap / message-less delivery. When {@link capped}
+     * is true this is the true (over-cap) count; the service refuses such a delivery
+     * rather than fanning it out.
+     */
+    readonly total: number;
+    /**
+     * True iff {@link total} exceeded the fan-out cap ({@link MAX_MESSAGES_PER_DELIVERY},
+     * or the caller-supplied `maxMessages`): an implausibly large fan-out the service MUST
+     * refuse fail-closed (a bounded response), never process as an unbounded loop.
+     */
+    readonly capped: boolean;
+    /**
+     * Transform the already-resolved message at `index` into a {@link BridgeMessage}
+     * WITHOUT re-parsing the delivery — identical output to
+     * `waMessageToBridgeMessage(raw, { messageIndex: index })` for an in-range index.
+     * Throws {@link WhatsAppParseError} for a refused (non-text / invalid) entry, exactly
+     * as the single-message API does, or for an out-of-range / non-integer index.
+     */
+    messageAt(index: number): BridgeMessage;
+}
+/**
+ * JSON-parse + resolve a raw WhatsApp delivery's `messages[]` ONCE, returning a
+ * {@link WhatsAppDelivery} whose {@link WhatsAppDelivery.messageAt} transforms each
+ * message by indexing into the already-parsed records (no per-index re-parse — the fix
+ * for the authenticated O(N × body-size) fan-out amplification).
+ *
+ * Pure + fail-closed + NEVER throws from THIS call (like {@link whatsappMessageCount}):
+ * an over-byte-cap / non-JSON / non-object / message-less delivery yields
+ * `{ total: 0, capped: false }` with a `messageAt` that throws (there is nothing to
+ * fan out). A delivery whose resolved count exceeds `maxMessages` yields
+ * `capped: true` — the caller refuses it rather than looping.
+ *
+ * @param maxMessages the fan-out cap (default {@link MAX_MESSAGES_PER_DELIVERY}); a
+ *   non-positive / non-integer value falls back to the default (fail-safe).
+ */
+export declare function parseWhatsAppDelivery(raw: string | Uint8Array, maxMessages?: number): WhatsAppDelivery;
 /**
  * Count the importable `messages[]` entries in a raw WhatsApp delivery — the fan-out
  * arity the M2.4 webhook service needs (one Meta delivery can carry MANY messages,

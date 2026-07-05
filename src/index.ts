@@ -193,10 +193,13 @@ export * as vocab from "./vocab.js";
 export * as webhook from "./webhook/index.js";
 // --- channels: whatsapp business cloud (M2.2) ---
 export {
+  MAX_MESSAGES_PER_DELIVERY,
+  parseWhatsAppDelivery,
   WHATSAPP_CHANNEL,
   WHATSAPP_RAW_MEDIA_TYPE,
   WhatsAppChannelAdapter,
   type WhatsAppChannelAdapterOptions,
+  type WhatsAppDelivery,
   type WhatsAppParseContext,
   WhatsAppParseError,
   waIdToTelIri,

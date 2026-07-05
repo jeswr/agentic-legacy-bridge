@@ -61,5 +61,5 @@ export * as vocab from "./vocab.js";
 // --- M2.4: the inbound-webhook service (also the `./webhook` subexport) ---
 export * as webhook from "./webhook/index.js";
 // --- channels: whatsapp business cloud (M2.2) ---
-export { WHATSAPP_CHANNEL, WHATSAPP_RAW_MEDIA_TYPE, WhatsAppChannelAdapter, WhatsAppParseError, waIdToTelIri, waMessageToBridgeMessage, whatsappMessageCount, } from "./whatsapp.js";
+export { MAX_MESSAGES_PER_DELIVERY, parseWhatsAppDelivery, WHATSAPP_CHANNEL, WHATSAPP_RAW_MEDIA_TYPE, WhatsAppChannelAdapter, WhatsAppParseError, waIdToTelIri, waMessageToBridgeMessage, whatsappMessageCount, } from "./whatsapp.js";
 //# sourceMappingURL=index.js.map

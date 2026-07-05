@@ -116,6 +116,20 @@ const MAX_EVENT_BYTES = 1024 * 1024;
 const MAX_TEXT_CHARS = 100_000;
 /** Cap on a display name (`profile.name`). */
 const MAX_NAME_CHARS = 200;
+/**
+ * Hard cap on the number of `messages[]` entries fanned out from ONE WhatsApp
+ * delivery — the fan-out arity bound (M2-DESIGN.md §3.4). A genuine WhatsApp Business
+ * Cloud webhook carries a single message or a small handful; Meta does not batch
+ * hundreds of user messages into one delivery. `1000` is orders of magnitude above any
+ * realistic batch, so a delivery exceeding it is a malformed / hostile payload, not
+ * legitimate traffic. The bound exists because the byte cap alone is not enough: a
+ * ~0.9 MB signed delivery can encode hundreds of thousands of tiny message objects, so
+ * WITHOUT this cap the (authenticated) fan-out loop is unbounded relative to a bounded
+ * body — an authenticated-CPU-amplification DoS. Over the cap the service refuses the
+ * delivery fail-closed (a bounded response), it never loops (see
+ * {@link WhatsAppDelivery.capped}).
+ */
+export const MAX_MESSAGES_PER_DELIVERY = 1000;
 
 // --- WhatsApp id / number shapes (anchored + linear → ReDoS-free) ------------
 /**
@@ -277,90 +291,58 @@ function resolveMessages(envelope: Record<string, unknown>): {
   return { messages, contacts };
 }
 
-/** Best-effort, control-stripped, single-line, capped `profile.name` for a wa_id (or undefined). */
-function contactName(
+/**
+ * Build a `wa_id -> displayName` lookup from the delivery's `contacts[]` in a SINGLE
+ * pass (best-effort, control-stripped, single-line, capped `profile.name`). Built ONCE
+ * per delivery so fan-out is O(1) per message — NOT a full `contacts[]` scan per message
+ * (which would reintroduce an O(messages × contacts) amplification of the same class as
+ * the O(messages × body-size) fan-out this module was hardened against). Semantics match
+ * the old per-message scan exactly: the FIRST contact (in order) with a matching wa_id
+ * AND a non-empty cleaned name wins; a contact with no wa_id / no usable name is skipped.
+ */
+function buildContactNames(
   contacts: readonly Record<string, unknown>[],
-  waId: string,
-): string | undefined {
+): ReadonlyMap<string, string> {
+  const names = new Map<string, string>();
   for (const contact of contacts) {
-    if (asString(contact.wa_id) !== waId) continue;
+    const waId = asString(contact.wa_id);
+    if (waId === undefined || names.has(waId)) continue;
     const profile = asRecord(contact.profile);
     const name = profile !== undefined ? asString(profile.name) : undefined;
     if (name === undefined) continue;
     const clean = oneLine(sanitizeText(name)).slice(0, MAX_NAME_CHARS).trim();
-    if (clean !== "") return clean;
+    if (clean !== "") names.set(waId, clean);
   }
-  return undefined;
+  return names;
 }
 
 /**
- * Parse a raw WhatsApp Cloud webhook delivery into a channel-neutral
- * {@link BridgeMessage}, selecting ONE message ({@link WhatsAppParseContext.messageIndex},
- * default 0) from the delivery's flattened `messages[]`.
+ * Transform ONE already-resolved (and already-selected) WhatsApp message record into a
+ * channel-neutral {@link BridgeMessage}. This is the shared per-message core: both the
+ * single-message {@link waMessageToBridgeMessage} and the parse-once
+ * {@link parseWhatsAppDelivery} call it AFTER doing the (single) JSON parse + message
+ * resolution, so the two paths are byte-for-byte identical by construction and the
+ * expensive per-message work happens exactly once per message.
  *
- * Pure + hermetic + fail-closed. The `rawSha256`/`rawByteLength` provenance anchor is
- * computed over the EXACT input bytes (so it matches the byte-exact `.json` anchor
- * `importInbound` stores). Only a `type: "text"` message is importable — a non-text
- * (interactive / media / location / reaction / template) message carries no
- * plain-text body and is REFUSED (skipped). The only throw is
- * {@link WhatsAppParseError} for a refused input; everything survivable degrades with
- * a `warnings` entry.
- *
- * @throws {WhatsAppParseError} on an over-cap input, non-JSON / non-object body, a
- *   delivery with no importable `messages`, an out-of-range `messageIndex`, a
- *   non-text message type, a missing/invalid `id` (wamid), or a missing plain-text
- *   `text.body`.
+ * `rawSha256` / `rawByteLength` are the delivery-wide provenance anchor (every message
+ * fanned out from one signed delivery shares them). `index` / `total` drive only the
+ * multi-message advisory warning. Pure + fail-closed: the only throw is
+ * {@link WhatsAppParseError} for a refused (non-text / invalid) record.
  */
-export function waMessageToBridgeMessage(
-  raw: string | Uint8Array,
-  ctx: WhatsAppParseContext = {},
+function bridgeMessageFromRecord(
+  inner: Record<string, unknown>,
+  names: ReadonlyMap<string, string>,
+  rawSha256: string,
+  rawByteLength: number,
+  index: number,
+  total: number,
 ): BridgeMessage {
-  const buf = typeof raw === "string" ? Buffer.from(raw, "utf8") : Buffer.from(raw);
-  if (buf.length > MAX_EVENT_BYTES) {
-    throw new WhatsAppParseError(
-      `whatsapp webhook exceeds the ${MAX_EVENT_BYTES}-byte hard cap (${buf.length} bytes).`,
-    );
-  }
-  const rawSha256 = createHash("sha256").update(buf).digest("hex");
-
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(buf.toString("utf8"));
-  } catch {
-    throw new WhatsAppParseError("whatsapp webhook is not valid JSON.");
-  }
-  const envelope = asRecord(parsed);
-  if (envelope === undefined) {
-    throw new WhatsAppParseError("whatsapp webhook is not a JSON object.");
-  }
-
   const warnings: string[] = [];
-
-  const { messages, contacts } = resolveMessages(envelope);
-  if (messages.length === 0) {
-    throw new WhatsAppParseError("whatsapp webhook carries no importable messages.");
-  }
-
-  // Select the requested message (fan-out seam). A non-integer / negative index → 0.
-  const rawIndex = ctx.messageIndex;
-  const index =
-    typeof rawIndex === "number" && Number.isInteger(rawIndex) && rawIndex > 0 ? rawIndex : 0;
-  if (index >= messages.length) {
-    throw new WhatsAppParseError(
-      `whatsapp messageIndex ${index} is out of range (${messages.length} message(s)).`,
-    );
-  }
-  if (messages.length > 1) {
+  if (total > 1) {
     warnings.push(
-      `whatsapp delivery carries ${messages.length} messages; parsed index ${index} ` +
+      `whatsapp delivery carries ${total} messages; parsed index ${index} ` +
         "(fan out the rest at the service layer).",
     );
-  }
-  // `messages[index]` is non-undefined here (index < messages.length, checked above),
-  // but noUncheckedIndexedAccess still widens it — narrow explicitly, fail-closed.
-  const inner = messages[index];
-  if (inner === undefined) {
-    throw new WhatsAppParseError("whatsapp selected message is missing.");
   }
 
   // Only a `type: "text"` message carries an importable plain-text body. Interactive /
@@ -398,7 +380,7 @@ export function waMessageToBridgeMessage(
   const from = asString(inner.from);
   let sender: BridgeSender | undefined;
   if (from !== undefined && WA_ID.test(from)) {
-    const displayName = contactName(contacts, from);
+    const displayName = names.get(from); // O(1) — the delivery-wide contact map (built once)
     sender = {
       handle: from,
       ...(displayName !== undefined ? { displayName } : {}),
@@ -433,9 +415,190 @@ export function waMessageToBridgeMessage(
     // (null-prototype), so a hostile payload key can never touch the prototype chain.
     signals: Object.freeze(Object.create(null) as Record<string, string>),
     rawSha256,
-    rawByteLength: buf.length,
+    rawByteLength,
     rawMediaType: WHATSAPP_RAW_MEDIA_TYPE,
     warnings,
+  };
+}
+
+/**
+ * Parse a raw WhatsApp Cloud webhook delivery into a channel-neutral
+ * {@link BridgeMessage}, selecting ONE message ({@link WhatsAppParseContext.messageIndex},
+ * default 0) from the delivery's flattened `messages[]`.
+ *
+ * Pure + hermetic + fail-closed. The `rawSha256`/`rawByteLength` provenance anchor is
+ * computed over the EXACT input bytes (so it matches the byte-exact `.json` anchor
+ * `importInbound` stores). Only a `type: "text"` message is importable — a non-text
+ * (interactive / media / location / reaction / template) message carries no
+ * plain-text body and is REFUSED (skipped). The only throw is
+ * {@link WhatsAppParseError} for a refused input; everything survivable degrades with
+ * a `warnings` entry.
+ *
+ * NOTE for FAN-OUT: to import EVERY message in a multi-message delivery, do NOT call
+ * this per index — that re-parses the whole delivery body once per message
+ * (O(messages × body-size)). Use {@link parseWhatsAppDelivery} instead: it JSON-parses
+ * the body ONCE and indexes into the resolved records. This single-message entry point
+ * stays for the adapter/`ChannelAdapter.parse` seam and a one-off select.
+ *
+ * @throws {WhatsAppParseError} on an over-cap input, non-JSON / non-object body, a
+ *   delivery with no importable `messages`, an out-of-range `messageIndex`, a
+ *   non-text message type, a missing/invalid `id` (wamid), or a missing plain-text
+ *   `text.body`.
+ */
+export function waMessageToBridgeMessage(
+  raw: string | Uint8Array,
+  ctx: WhatsAppParseContext = {},
+): BridgeMessage {
+  const buf = typeof raw === "string" ? Buffer.from(raw, "utf8") : Buffer.from(raw);
+  if (buf.length > MAX_EVENT_BYTES) {
+    throw new WhatsAppParseError(
+      `whatsapp webhook exceeds the ${MAX_EVENT_BYTES}-byte hard cap (${buf.length} bytes).`,
+    );
+  }
+  const rawSha256 = createHash("sha256").update(buf).digest("hex");
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(buf.toString("utf8"));
+  } catch {
+    throw new WhatsAppParseError("whatsapp webhook is not valid JSON.");
+  }
+  const envelope = asRecord(parsed);
+  if (envelope === undefined) {
+    throw new WhatsAppParseError("whatsapp webhook is not a JSON object.");
+  }
+
+  const { messages, contacts } = resolveMessages(envelope);
+  if (messages.length === 0) {
+    throw new WhatsAppParseError("whatsapp webhook carries no importable messages.");
+  }
+
+  // Select the requested message (fan-out seam). A non-integer / negative index → 0.
+  const rawIndex = ctx.messageIndex;
+  const index =
+    typeof rawIndex === "number" && Number.isInteger(rawIndex) && rawIndex > 0 ? rawIndex : 0;
+  if (index >= messages.length) {
+    throw new WhatsAppParseError(
+      `whatsapp messageIndex ${index} is out of range (${messages.length} message(s)).`,
+    );
+  }
+  // `messages[index]` is non-undefined here (index < messages.length, checked above),
+  // but noUncheckedIndexedAccess still widens it — narrow explicitly, fail-closed.
+  const inner = messages[index];
+  if (inner === undefined) {
+    throw new WhatsAppParseError("whatsapp selected message is missing.");
+  }
+  const names = buildContactNames(contacts);
+  return bridgeMessageFromRecord(inner, names, rawSha256, buf.length, index, messages.length);
+}
+
+/**
+ * The PARSE-ONCE fan-out view of a raw WhatsApp Business Cloud webhook delivery — the
+ * primitive the M2.4 webhook service uses to import a multi-message delivery WITHOUT
+ * re-parsing the body once per message. {@link parseWhatsAppDelivery} JSON-parses +
+ * resolves the delivery's `messages[]` a SINGLE time; {@link WhatsAppDelivery.messageAt}
+ * then transforms one already-resolved record by index (no re-parse). Fanning a delivery
+ * of N messages out is therefore O(body-size) + O(N), never O(N × body-size).
+ */
+export interface WhatsAppDelivery {
+  /** SHA-256 hex over the EXACT raw delivery bytes — shared by every fanned-out message. */
+  readonly rawSha256: string;
+  /** Byte length of the EXACT raw delivery bytes — shared by every fanned-out message. */
+  readonly rawByteLength: number;
+  /**
+   * The number of `messages[]` entries resolved from the delivery — `0` for a
+   * non-JSON / non-object / over-byte-cap / message-less delivery. When {@link capped}
+   * is true this is the true (over-cap) count; the service refuses such a delivery
+   * rather than fanning it out.
+   */
+  readonly total: number;
+  /**
+   * True iff {@link total} exceeded the fan-out cap ({@link MAX_MESSAGES_PER_DELIVERY},
+   * or the caller-supplied `maxMessages`): an implausibly large fan-out the service MUST
+   * refuse fail-closed (a bounded response), never process as an unbounded loop.
+   */
+  readonly capped: boolean;
+  /**
+   * Transform the already-resolved message at `index` into a {@link BridgeMessage}
+   * WITHOUT re-parsing the delivery — identical output to
+   * `waMessageToBridgeMessage(raw, { messageIndex: index })` for an in-range index.
+   * Throws {@link WhatsAppParseError} for a refused (non-text / invalid) entry, exactly
+   * as the single-message API does, or for an out-of-range / non-integer index.
+   */
+  messageAt(index: number): BridgeMessage;
+}
+
+/**
+ * JSON-parse + resolve a raw WhatsApp delivery's `messages[]` ONCE, returning a
+ * {@link WhatsAppDelivery} whose {@link WhatsAppDelivery.messageAt} transforms each
+ * message by indexing into the already-parsed records (no per-index re-parse — the fix
+ * for the authenticated O(N × body-size) fan-out amplification).
+ *
+ * Pure + fail-closed + NEVER throws from THIS call (like {@link whatsappMessageCount}):
+ * an over-byte-cap / non-JSON / non-object / message-less delivery yields
+ * `{ total: 0, capped: false }` with a `messageAt` that throws (there is nothing to
+ * fan out). A delivery whose resolved count exceeds `maxMessages` yields
+ * `capped: true` — the caller refuses it rather than looping.
+ *
+ * @param maxMessages the fan-out cap (default {@link MAX_MESSAGES_PER_DELIVERY}); a
+ *   non-positive / non-integer value falls back to the default (fail-safe).
+ */
+export function parseWhatsAppDelivery(
+  raw: string | Uint8Array,
+  maxMessages: number = MAX_MESSAGES_PER_DELIVERY,
+): WhatsAppDelivery {
+  const buf = typeof raw === "string" ? Buffer.from(raw, "utf8") : Buffer.from(raw);
+  const cap =
+    Number.isInteger(maxMessages) && maxMessages > 0 ? maxMessages : MAX_MESSAGES_PER_DELIVERY;
+
+  const noneMessageAt = (): never => {
+    throw new WhatsAppParseError("whatsapp webhook carries no importable messages.");
+  };
+  const none: WhatsAppDelivery = {
+    rawSha256: "",
+    rawByteLength: buf.length,
+    total: 0,
+    capped: false,
+    messageAt: noneMessageAt,
+  };
+
+  if (buf.length > MAX_EVENT_BYTES) return none;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(buf.toString("utf8"));
+  } catch {
+    return none;
+  }
+  const envelope = asRecord(parsed);
+  if (envelope === undefined) return none;
+
+  const { messages, contacts } = resolveMessages(envelope);
+  const total = messages.length;
+  if (total === 0) return none;
+
+  const capped = total > cap;
+  const rawSha256 = createHash("sha256").update(buf).digest("hex");
+  // Build the wa_id -> displayName lookup ONCE for the whole delivery, so a subsequent
+  // messageAt() fan-out is O(1) per message — never an O(messages × contacts) scan.
+  const names = buildContactNames(contacts);
+
+  return {
+    rawSha256,
+    rawByteLength: buf.length,
+    total,
+    capped,
+    messageAt(index: number): BridgeMessage {
+      if (!Number.isInteger(index) || index < 0 || index >= total) {
+        throw new WhatsAppParseError(
+          `whatsapp messageIndex ${index} is out of range (${total} message(s)).`,
+        );
+      }
+      const inner = messages[index];
+      if (inner === undefined) {
+        throw new WhatsAppParseError("whatsapp selected message is missing.");
+      }
+      return bridgeMessageFromRecord(inner, names, rawSha256, buf.length, index, total);
+    },
   };
 }
 

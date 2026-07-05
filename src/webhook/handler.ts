@@ -31,7 +31,11 @@ import type { Interpreter } from "../interpret.js";
 import type { BridgeMessage } from "../message.js";
 import { canonicalContainer } from "../safe-iri.js";
 import { SlackParseError, slackEventToBridgeMessage } from "../slack.js";
-import { WhatsAppParseError, waMessageToBridgeMessage, whatsappMessageCount } from "../whatsapp.js";
+import {
+  MAX_MESSAGES_PER_DELIVERY,
+  parseWhatsAppDelivery,
+  WhatsAppParseError,
+} from "../whatsapp.js";
 import {
   OK,
   PAYLOAD_TOO_LARGE,
@@ -54,6 +58,14 @@ const METHOD_NOT_ALLOWED: WebhookResponse = Object.freeze({ status: 405 });
 const FORBIDDEN: WebhookResponse = Object.freeze({ status: 403 });
 /** A 500 — a transient operational failure (e.g. a pod write error); platform retries. */
 const INTERNAL_ERROR: WebhookResponse = Object.freeze({ status: 500 });
+/**
+ * A 422 — a verified delivery whose message fan-out exceeds the per-delivery cap
+ * ({@link WebhookHandlerOptions.maxMessagesPerDelivery}). Distinct from the 413 byte
+ * cap: the body is within the byte budget and well-formed, but carries an implausible
+ * number of messages, so it is refused fail-closed (bounded), never fanned out in an
+ * unbounded loop. A genuine WhatsApp delivery is a small handful of messages.
+ */
+const UNPROCESSABLE_TOO_MANY_MESSAGES: WebhookResponse = Object.freeze({ status: 422 });
 
 /** The Slack channel config: the app Signing Secret (from the service env). */
 export interface SlackWebhookConfig {
@@ -84,6 +96,8 @@ export type WebhookAuditEvent =
   | { readonly kind: "url-verification"; readonly channel: string }
   | { readonly kind: "skipped"; readonly channel: string }
   | { readonly kind: "written"; readonly channel: string; readonly created: boolean }
+  /** A verified delivery refused because its message count exceeded the fan-out cap. */
+  | { readonly kind: "over-message-cap"; readonly channel: string; readonly count: number }
   | { readonly kind: "error"; readonly channel: string };
 
 /** Options for {@link createWebhookHandler}. */
@@ -113,6 +127,14 @@ export interface WebhookHandlerOptions {
   readonly candidateWebIdsFor?: (message: BridgeMessage) => readonly string[] | undefined;
   /** The hard cap on the raw body (default {@link DEFAULT_MAX_BODY_BYTES}). */
   readonly maxBodyBytes?: number;
+  /**
+   * The hard cap on the number of messages fanned out from ONE WhatsApp delivery
+   * (default {@link MAX_MESSAGES_PER_DELIVERY}). A verified delivery whose message
+   * count exceeds it is refused fail-closed (`422`), never processed as an unbounded
+   * loop — the fan-out amplification bound. WhatsApp only; Slack delivers one message
+   * per POST. Must be a positive integer if supplied (validated at construction).
+   */
+  readonly maxMessagesPerDelivery?: number;
   /** Injectable clock in epoch ms (default `Date.now`) — drives the Slack replay window. */
   readonly now?: () => number;
   /** A privacy-safe audit sink (counters only — never payloads/secrets). */
@@ -151,6 +173,13 @@ export function createWebhookHandler(options: WebhookHandlerOptions): WebhookHan
     }
   }
   const maxBodyBytes = options.maxBodyBytes ?? DEFAULT_MAX_BODY_BYTES;
+  if (
+    options.maxMessagesPerDelivery !== undefined &&
+    (!Number.isInteger(options.maxMessagesPerDelivery) || options.maxMessagesPerDelivery <= 0)
+  ) {
+    throw new Error("webhook: maxMessagesPerDelivery must be a positive integer when supplied.");
+  }
+  const maxMessagesPerDelivery = options.maxMessagesPerDelivery ?? MAX_MESSAGES_PER_DELIVERY;
   const now = options.now ?? Date.now;
   const emit = (event: WebhookAuditEvent): void => {
     options.onEvent?.(event);
@@ -212,7 +241,7 @@ export function createWebhookHandler(options: WebhookHandlerOptions): WebhookHan
     try {
       return config.channel === "slack"
         ? await handleSlackDelivery(rawBody, options, container, emit)
-        : await handleWhatsAppDelivery(rawBody, options, container, emit);
+        : await handleWhatsAppDelivery(rawBody, options, container, emit, maxMessagesPerDelivery);
     } catch {
       emit({ kind: "error", channel: config.channel });
       return INTERNAL_ERROR;
@@ -304,16 +333,32 @@ async function handleWhatsAppDelivery(
   options: WebhookHandlerOptions,
   container: string,
   emit: (event: WebhookAuditEvent) => void,
+  maxMessagesPerDelivery: number,
 ): Promise<WebhookResponse> {
-  const count = whatsappMessageCount(rawBody);
-  if (count === 0) {
+  // Parse the delivery body ONCE, then fan out by indexing into the already-parsed
+  // records (delivery.messageAt) — NOT by re-parsing the whole body per message. This
+  // is the fix for the authenticated O(messages × body-size) amplification: a ~0.9 MB
+  // signed delivery could encode hundreds of thousands of message objects, and the old
+  // per-index re-parse turned that into hundreds of thousands of full-body parses.
+  const delivery = parseWhatsAppDelivery(rawBody, maxMessagesPerDelivery);
+
+  // An implausibly large fan-out is refused fail-closed with a bounded 422 — never an
+  // unbounded loop. Surfaced (NOT silently dropped) via a distinct audit counter so an
+  // over-cap delivery is visible to operators.
+  if (delivery.capped) {
+    emit({ kind: "over-message-cap", channel: "whatsapp", count: delivery.total });
+    return UNPROCESSABLE_TOO_MANY_MESSAGES;
+  }
+
+  if (delivery.total === 0) {
     emit({ kind: "skipped", channel: "whatsapp" }); // status/receipt change, no messages → ack
     return OK;
   }
-  for (let i = 0; i < count; i++) {
+
+  for (let i = 0; i < delivery.total; i++) {
     let message: BridgeMessage;
     try {
-      message = waMessageToBridgeMessage(rawBody, { messageIndex: i });
+      message = delivery.messageAt(i); // parse-once: index into the resolved records
     } catch (err) {
       if (err instanceof WhatsAppParseError) {
         emit({ kind: "skipped", channel: "whatsapp" }); // non-text / bad entry → skip this one

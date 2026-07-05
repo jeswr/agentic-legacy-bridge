@@ -1,13 +1,15 @@
 // AUTHORED-BY Claude Opus 4.8
 import { createHash } from "node:crypto";
 import { Parser } from "n3";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { ChannelParseError } from "./errors.js";
 import { importInbound } from "./import.js";
 import { detectBridgeCapability } from "./negotiate.js";
 import { personIriFor } from "./sender.js";
 import { AGENTIC_IDENTITY_STATUS, SCHEMA_IDENTIFIER } from "./vocab.js";
 import {
+  MAX_MESSAGES_PER_DELIVERY,
+  parseWhatsAppDelivery,
   WhatsAppChannelAdapter,
   WhatsAppParseError,
   waIdToTelIri,
@@ -516,3 +518,195 @@ function webhook0(value: Record<string, unknown>): string {
     entry: [{ changes: [{ field: "messages", value }] }],
   });
 }
+
+// --- parseWhatsAppDelivery (the parse-ONCE fan-out primitive) -----------------
+
+describe("parseWhatsAppDelivery — parse once, index into the resolved records", () => {
+  /** A full webhook body carrying `n` valid text messages (mixed types via `types`). */
+  function manyMessages(n: number, types?: (i: number) => string): string {
+    const messages = Array.from({ length: n }, (_, i) => {
+      const type = types?.(i) ?? "text";
+      const base: Record<string, unknown> = {
+        from: "16315551234",
+        id: `${WAMID}${i.toString(36).padStart(3, "0")}`,
+        timestamp: "1720000000",
+        type,
+      };
+      return type === "text"
+        ? { ...base, text: { body: `m${i}` } }
+        : { ...base, image: { id: "x" } };
+    });
+    return JSON.stringify({
+      object: "whatsapp_business_account",
+      entry: [
+        {
+          changes: [
+            {
+              field: "messages",
+              value: {
+                messaging_product: "whatsapp",
+                contacts: [{ profile: { name: "A" }, wa_id: "16315551234" }],
+                messages,
+              },
+            },
+          ],
+        },
+      ],
+    });
+  }
+
+  it("produces output IDENTICAL to the old per-index parse for every message", () => {
+    const raw = manyMessages(4);
+    const delivery = parseWhatsAppDelivery(raw);
+    expect(delivery.total).toBe(4);
+    expect(delivery.capped).toBe(false);
+    for (let i = 0; i < delivery.total; i++) {
+      // messageAt(i) must equal waMessageToBridgeMessage(raw, { messageIndex: i }).
+      expect(delivery.messageAt(i)).toEqual(waMessageToBridgeMessage(raw, { messageIndex: i }));
+    }
+  });
+
+  it("resolves each message's displayName from the shared contact map (per-sender)", () => {
+    // Three distinct senders, each with its OWN contact name + one contact whose name is
+    // empty then re-supplied later (first-non-empty-per-wa_id wins). A naive map that
+    // returned the first contact's name for every message would fail this.
+    const raw = JSON.stringify({
+      object: "whatsapp_business_account",
+      entry: [
+        {
+          changes: [
+            {
+              field: "messages",
+              value: {
+                messaging_product: "whatsapp",
+                contacts: [
+                  { profile: { name: "" }, wa_id: "16315550001" }, // empty → skipped
+                  { profile: { name: "Alice" }, wa_id: "16315550001" }, // wins for 0001
+                  { profile: { name: "Bob" }, wa_id: "16315550002" },
+                  // no contact for 16315550003 → provisional sender (no displayName)
+                ],
+                messages: [
+                  {
+                    from: "16315550001",
+                    id: `${WAMID}a01`,
+                    timestamp: "1720000000",
+                    type: "text",
+                    text: { body: "m0" },
+                  },
+                  {
+                    from: "16315550002",
+                    id: `${WAMID}b02`,
+                    timestamp: "1720000000",
+                    type: "text",
+                    text: { body: "m1" },
+                  },
+                  {
+                    from: "16315550003",
+                    id: `${WAMID}c03`,
+                    timestamp: "1720000000",
+                    type: "text",
+                    text: { body: "m2" },
+                  },
+                ],
+              },
+            },
+          ],
+        },
+      ],
+    });
+    const delivery = parseWhatsAppDelivery(raw);
+    expect(delivery.messageAt(0).sender?.displayName).toBe("Alice");
+    expect(delivery.messageAt(1).sender?.displayName).toBe("Bob");
+    expect(delivery.messageAt(2).sender?.displayName).toBeUndefined();
+    // And every messageAt matches the single-message API byte-for-byte.
+    for (let i = 0; i < delivery.total; i++) {
+      expect(delivery.messageAt(i)).toEqual(waMessageToBridgeMessage(raw, { messageIndex: i }));
+    }
+  });
+
+  it("shares one delivery-anchor rawSha256/rawByteLength across the whole batch", () => {
+    const raw = manyMessages(3);
+    const delivery = parseWhatsAppDelivery(raw);
+    const a = delivery.messageAt(0);
+    const b = delivery.messageAt(2);
+    expect(a.rawSha256).toBe(b.rawSha256);
+    expect(a.rawByteLength).toBe(b.rawByteLength);
+    expect(a.rawSha256).toBe(createHash("sha256").update(Buffer.from(raw, "utf8")).digest("hex"));
+    expect(a.messageId).not.toBe(b.messageId);
+  });
+
+  it("parses the body EXACTLY ONCE across resolve + fanning out every message", () => {
+    // Deterministic proof of parse-once (replaces a flaky wall-clock threshold): spy on
+    // JSON.parse and assert the whole delivery costs exactly ONE parse, and that fanning
+    // out ALL messages via messageAt adds ZERO further parses — this is what kills the
+    // old O(messages × body-size) per-index re-parse amplification.
+    const raw = manyMessages(500); // within the default cap, so every message fans out
+    const spy = vi.spyOn(JSON, "parse");
+    try {
+      const delivery = parseWhatsAppDelivery(raw);
+      const parsesForResolve = spy.mock.calls.length;
+      for (let i = 0; i < delivery.total; i++) delivery.messageAt(i); // fan out all 500
+      const parsesTotal = spy.mock.calls.length;
+      expect(delivery.total).toBe(500);
+      expect(delivery.capped).toBe(false);
+      expect(parsesForResolve).toBe(1); // resolving the delivery = exactly one JSON.parse
+      expect(parsesTotal).toBe(1); // 500 messageAt() calls added NO further parse
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("resolves + flags an over-cap large-count delivery without a per-index re-parse", () => {
+    // A large-count (> cap) delivery is resolved and flagged capped from a SINGLE parse;
+    // the caller refuses it rather than fanning out — bounded, not an unbounded loop.
+    const spy = vi.spyOn(JSON, "parse");
+    try {
+      const delivery = parseWhatsAppDelivery(manyMessages(2000));
+      expect(delivery.total).toBe(2000);
+      expect(delivery.capped).toBe(true); // 2000 > MAX_MESSAGES_PER_DELIVERY (1000)
+      expect(spy.mock.calls.length).toBe(1); // one parse, regardless of the 2000 messages
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("flags capped when the resolved count exceeds the (default) cap", () => {
+    expect(parseWhatsAppDelivery(manyMessages(MAX_MESSAGES_PER_DELIVERY)).capped).toBe(false);
+    expect(parseWhatsAppDelivery(manyMessages(MAX_MESSAGES_PER_DELIVERY + 1)).capped).toBe(true);
+  });
+
+  it("honours a caller-supplied (smaller) cap; falls back to the default for a bad cap", () => {
+    expect(parseWhatsAppDelivery(manyMessages(3), 2).capped).toBe(true);
+    expect(parseWhatsAppDelivery(manyMessages(3), 3).capped).toBe(false);
+    // A non-positive / non-integer cap falls back to the default (fail-safe): 3 < 1000.
+    expect(parseWhatsAppDelivery(manyMessages(3), 0).capped).toBe(false);
+    expect(parseWhatsAppDelivery(manyMessages(3), -5).capped).toBe(false);
+    expect(parseWhatsAppDelivery(manyMessages(3), 1.5).capped).toBe(false);
+  });
+
+  it("skips non-text records per index exactly as the single-message API does", () => {
+    // index 0 = image (refused), index 1 = text (importable).
+    const raw = manyMessages(2, (i) => (i === 0 ? "image" : "text"));
+    const delivery = parseWhatsAppDelivery(raw);
+    expect(() => delivery.messageAt(0)).toThrow(WhatsAppParseError);
+    expect(delivery.messageAt(1).textBody).toBe("m1");
+  });
+
+  it("never throws from the parse call for a fail-closed input; messageAt then throws", () => {
+    for (const bad of ["not json", "[]", JSON.stringify({ object: "x", entry: [] })]) {
+      const delivery = parseWhatsAppDelivery(bad);
+      expect(delivery.total).toBe(0);
+      expect(delivery.capped).toBe(false);
+      expect(() => delivery.messageAt(0)).toThrow(WhatsAppParseError);
+    }
+    // Over the byte cap → total 0, never a throw from the parse call.
+    expect(parseWhatsAppDelivery("x".repeat(2 * 1024 * 1024)).total).toBe(0);
+  });
+
+  it("throws (fail-closed) on an out-of-range or non-integer index", () => {
+    const delivery = parseWhatsAppDelivery(manyMessages(2));
+    expect(() => delivery.messageAt(2)).toThrow(WhatsAppParseError);
+    expect(() => delivery.messageAt(-1)).toThrow(WhatsAppParseError);
+    expect(() => delivery.messageAt(1.5)).toThrow(WhatsAppParseError);
+  });
+});

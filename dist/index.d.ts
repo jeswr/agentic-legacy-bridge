@@ -48,5 +48,5 @@ export { type CardDiscovery, canonicalPersonKey, createGuardedUpgradeTransport, 
 export { assertRelationshipInvariant, initialRelationship, parseRelationship, type RelationshipEvent, type RelationshipState, type RelationshipStateName, serializeRelationship, type TransitionResult, transition, } from "./upgrade-state.js";
 export * as vocab from "./vocab.js";
 export * as webhook from "./webhook/index.js";
-export { WHATSAPP_CHANNEL, WHATSAPP_RAW_MEDIA_TYPE, WhatsAppChannelAdapter, type WhatsAppChannelAdapterOptions, type WhatsAppParseContext, WhatsAppParseError, waIdToTelIri, waMessageToBridgeMessage, whatsappMessageCount, } from "./whatsapp.js";
+export { MAX_MESSAGES_PER_DELIVERY, parseWhatsAppDelivery, WHATSAPP_CHANNEL, WHATSAPP_RAW_MEDIA_TYPE, WhatsAppChannelAdapter, type WhatsAppChannelAdapterOptions, type WhatsAppDelivery, type WhatsAppParseContext, WhatsAppParseError, waIdToTelIri, waMessageToBridgeMessage, whatsappMessageCount, } from "./whatsapp.js";
 //# sourceMappingURL=index.d.ts.map

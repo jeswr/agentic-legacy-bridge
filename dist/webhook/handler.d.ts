@@ -73,6 +73,12 @@ export type WebhookAuditEvent = {
     readonly kind: "written";
     readonly channel: string;
     readonly created: boolean;
+}
+/** A verified delivery refused because its message count exceeded the fan-out cap. */
+ | {
+    readonly kind: "over-message-cap";
+    readonly channel: string;
+    readonly count: number;
 } | {
     readonly kind: "error";
     readonly channel: string;
@@ -104,6 +110,14 @@ export interface WebhookHandlerOptions {
     readonly candidateWebIdsFor?: (message: BridgeMessage) => readonly string[] | undefined;
     /** The hard cap on the raw body (default {@link DEFAULT_MAX_BODY_BYTES}). */
     readonly maxBodyBytes?: number;
+    /**
+     * The hard cap on the number of messages fanned out from ONE WhatsApp delivery
+     * (default {@link MAX_MESSAGES_PER_DELIVERY}). A verified delivery whose message
+     * count exceeds it is refused fail-closed (`422`), never processed as an unbounded
+     * loop — the fan-out amplification bound. WhatsApp only; Slack delivers one message
+     * per POST. Must be a positive integer if supplied (validated at construction).
+     */
+    readonly maxMessagesPerDelivery?: number;
     /** Injectable clock in epoch ms (default `Date.now`) — drives the Slack replay window. */
     readonly now?: () => number;
     /** A privacy-safe audit sink (counters only — never payloads/secrets). */

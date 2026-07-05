@@ -379,4 +379,63 @@ describe("WhatsApp webhook handler — end to end", () => {
     // Only the text message was written (3 resources); the image was skipped.
     expect(calls.filter((c) => c.method === "PUT")).toHaveLength(3);
   });
+
+  it("refuses an over-cap delivery fail-closed (422), writes nothing, surfaces the event", async () => {
+    // A verified, byte-bounded delivery whose message count exceeds the fan-out cap is
+    // refused with a bounded 422 — never fanned out in an unbounded loop — and the
+    // over-cap is SURFACED via a distinct audit counter (not silently dropped). Uses a
+    // small caller-supplied cap so the amplification bound is exercised without 1001 msgs.
+    const events: WebhookAuditEvent[] = [];
+    const { fetchImpl, calls } = recordingFetch();
+    const handler = createWebhookHandler({
+      channel: { channel: "whatsapp", appSecret: META_SECRET, verifyToken: VERIFY_TOKEN },
+      container: CONTAINER,
+      writeFetch: fetchImpl,
+      maxMessagesPerDelivery: 2,
+      onEvent: (e) => events.push(e),
+      now,
+    });
+    const body = waBody([
+      { id: "wamid.AAA", from: "15551230000", text: "one" },
+      { id: "wamid.BBB", from: "15551230001", text: "two" },
+      { id: "wamid.CCC", from: "15551230002", text: "three" },
+    ]);
+    const res = await handler(req({ headers: metaSig(body), rawBody: enc(body) }));
+    expect(res.status).toBe(422);
+    expect(calls).toHaveLength(0); // fail-closed BEFORE any fan-out / write
+    expect(events).toContainEqual({ kind: "over-message-cap", channel: "whatsapp", count: 3 });
+  });
+
+  it("imports a delivery AT the cap (boundary is not off-by-one)", async () => {
+    // total === cap must NOT be refused — only total > cap is over the fan-out bound.
+    const { fetchImpl, calls } = recordingFetch();
+    const handler = createWebhookHandler({
+      channel: { channel: "whatsapp", appSecret: META_SECRET, verifyToken: VERIFY_TOKEN },
+      container: CONTAINER,
+      writeFetch: fetchImpl,
+      maxMessagesPerDelivery: 2,
+      now,
+    });
+    const body = waBody([
+      { id: "wamid.AAA", from: "15551230000", text: "one" },
+      { id: "wamid.BBB", from: "15551230001", text: "two" },
+    ]);
+    const res = await handler(req({ headers: metaSig(body), rawBody: enc(body) }));
+    expect(res.status).toBe(200);
+    expect(calls.filter((c) => c.method === "PUT")).toHaveLength(6); // 2 messages × 3 resources
+  });
+
+  it("rejects construction with a non-positive-integer maxMessagesPerDelivery", () => {
+    for (const bad of [0, -1, 2.5, Number.NaN]) {
+      expect(() =>
+        createWebhookHandler({
+          channel: { channel: "whatsapp", appSecret: META_SECRET, verifyToken: VERIFY_TOKEN },
+          container: CONTAINER,
+          writeFetch: recordingFetch().fetchImpl,
+          maxMessagesPerDelivery: bad,
+          now,
+        }),
+      ).toThrow(/maxMessagesPerDelivery must be a positive integer/);
+    }
+  });
 });
