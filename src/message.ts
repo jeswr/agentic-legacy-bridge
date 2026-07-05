@@ -70,6 +70,15 @@ export interface BridgeMessage {
   readonly rawMediaType: string;
   /** Non-fatal issues encountered while parsing. */
   readonly warnings: readonly string[];
+  /**
+   * Machine-readable JSON-LD block texts the channel carried (email: embedded
+   * `<script type="application/ld+json">` + `application/ld+json` MIME parts).
+   * UNTRUSTED, capped; consumed by the deterministic metadata extractors
+   * (metadata-protocol Rule 1). Channels without an analogue omit it.
+   */
+  readonly jsonLdBlocks?: readonly string[];
+  /** `text/calendar` (RFC 5545) part texts the channel carried. UNTRUSTED, capped. */
+  readonly calendarParts?: readonly string[];
 }
 
 /**
@@ -104,6 +113,8 @@ export function toBridgeMessage(email: EmailMessage): BridgeMessage {
     ...(email.messageId !== undefined ? { messageId: email.messageId } : {}),
     ...(email.inReplyTo !== undefined ? { threadId: email.inReplyTo } : {}),
     ...(email.dkimDomain !== undefined ? { dkimDomainClaim: email.dkimDomain } : {}),
+    ...(email.jsonLdBlocks !== undefined ? { jsonLdBlocks: email.jsonLdBlocks } : {}),
+    ...(email.calendarParts !== undefined ? { calendarParts: email.calendarParts } : {}),
     signals: Object.freeze(signals),
     rawSha256: email.rawSha256,
     rawByteLength: email.rawByteLength,

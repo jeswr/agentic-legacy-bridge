@@ -110,6 +110,8 @@ export {
   isBridgeMessage,
   toBridgeMessage,
 } from "./message.js";
+// --- the metadata protocol (NOW-PERSONAL-AGENT.md §5; also the `./metadata` subexport) ---
+export * as metadata from "./metadata/index.js";
 // --- rung 4: negotiation ---
 export {
   asChannel,

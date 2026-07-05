@@ -49,6 +49,8 @@ export function toBridgeMessage(email) {
         ...(email.messageId !== undefined ? { messageId: email.messageId } : {}),
         ...(email.inReplyTo !== undefined ? { threadId: email.inReplyTo } : {}),
         ...(email.dkimDomain !== undefined ? { dkimDomainClaim: email.dkimDomain } : {}),
+        ...(email.jsonLdBlocks !== undefined ? { jsonLdBlocks: email.jsonLdBlocks } : {}),
+        ...(email.calendarParts !== undefined ? { calendarParts: email.calendarParts } : {}),
         signals: Object.freeze(signals),
         rawSha256: email.rawSha256,
         rawByteLength: email.rawByteLength,

@@ -46,6 +46,8 @@ export { createHttpLlmExtractor, } from "./interpret-llm-http.js";
 export { DEFAULT_MAX_ATTEMPTS, DEFAULT_MAX_GRAPH_BYTES, DEFAULT_MAX_RAW_ANCHOR_BYTES, DEFAULT_MAX_RESOURCES_PER_SWEEP, reparseRawAnchor, sweepPendingInterpretations, } from "./interpret-sweep.js";
 // --- the channel-neutral message shape (M2.0) ---
 export { asBridgeMessage, isBridgeMessage, toBridgeMessage, } from "./message.js";
+// --- the metadata protocol (NOW-PERSONAL-AGENT.md §5; also the `./metadata` subexport) ---
+export * as metadata from "./metadata/index.js";
 // --- rung 4: negotiation ---
 export { asChannel, CHANNEL_EXTENSION_URI, CHANNEL_PREFERENCE, CHANNELS_HEADER, decideUpgrade, detectBridgeCapability, highestMutualChannel, REPLY_HEADER, } from "./negotiate.js";
 export { addInterpretation, clampConfidence, classifyReliability, DEFAULT_THRESHOLDS, } from "./reliability.js";

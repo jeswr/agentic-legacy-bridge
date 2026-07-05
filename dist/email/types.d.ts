@@ -48,6 +48,23 @@ export interface EmailMessage {
     readonly dkimDomain?: string;
     /** The best-effort plain-text body (decoded, control-stripped, size-capped). */
     readonly textBody: string;
+    /**
+     * Raw `<script type="application/ld+json">` block contents found in a text/html
+     * part, plus any `application/ld+json` MIME parts (metadata-protocol Rule 1 —
+     * Gmail email-markup / an embedded AgenticReply carrier). UNTRUSTED JSON text:
+     * control-stripped + count/size-capped at parse time, but NOT yet parsed or
+     * validated — the deterministic metadata extractors do that, fail-closed.
+     * Present only when at least one block was found. This is DATA, not markup —
+     * the no-stored-HTML rule is untouched (no HTML is ever surfaced).
+     */
+    readonly jsonLdBlocks?: readonly string[];
+    /**
+     * Decoded `text/calendar` MIME part texts (RFC 5545 — meeting invites /
+     * updates / cancellations). UNTRUSTED text: control-stripped + count/size-
+     * capped at parse time; parsed fail-closed by the deterministic iCal
+     * extractor. Present only when at least one part was found.
+     */
+    readonly calendarParts?: readonly string[];
     /** All decoded, unfolded headers as `[lower-cased-name, value]` pairs (order preserved). */
     readonly headers: ReadonlyArray<readonly [string, string]>;
     /** The lower-case hex SHA-256 of the raw input bytes — the provenance anchor digest. */

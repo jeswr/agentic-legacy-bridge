@@ -84,7 +84,49 @@ Two invariants, non-negotiable:
 2. **The floor always works.** Every non-abort outcome leaves a working channel underneath — worst
    case, email with inline structured data any future agent can still read.
 
-## 5. Onboarding
+## 5. The metadata protocol — deterministic first, LLM last
+
+The concrete form of `agentic-solid-vision/docs/NOW-PERSONAL-AGENT.md` §5 (three rules), so peer
+agents can learn each exchange shape once and thereafter interoperate with **zero LLM inference**.
+
+**Rule 1 — read structured metadata before any model reads anything.** The channel parse surfaces
+(count/size-capped, control-stripped): embedded `<script type="application/ld+json">` blocks +
+`application/ld+json` MIME parts (`jsonLdBlocks`) and `text/calendar` parts (`calendarParts`). The
+deterministic extractors (`StructuredMetadataInterpreter` / `extractStructuredMetadata`) map them
+with FIXED code — a closed-world schema.org shape table (never a JSON-LD processor: remote
+`@context` URLs are never dereferenced), an in-house RFC 5545 VEVENT parse, and the `AgenticReply`
+carrier below — at `agentic:Deterministic` confidence 1.0. Two honesty downgrades are load-bearing:
+a **zone-less local time** is resolved as UTC but lands at 0.6/`SelfReported` with a note (never a
+confident instant), and an **unverified `AgenticReply`** block lands entirely `SelfReported`
+(structure extracted, issuer NEVER asserted) so `classifyReliability` can never auto-run it —
+verification is the injectable `AgenticReplyVerifier` seam (`@jeswr/solid-vc` adapter).
+
+**Rule 2 — emit standardized metadata on every action, minting nothing.** Every `buildReply` can
+carry the sent-at envelope (`dateSent` → `schema:dateSent`, `sender` → `schema:sender`), and
+`buildActionMetadata` emits the standalone "the agent did X at *time*" descriptor
+(`schema:Message` + PROV attribution: `prov:wasAttributedTo`, `prov:wasDerivedFrom`, the ODRL
+mandate via `prov:qualifiedAssociation`/`prov:hadPlan`), over the same three-carrier assembly as §1.
+
+**Rule 3 — name + content-address the patterns.** Each exchange shape is a SHACL shape at a stable
+IRI under `https://w3id.org/jeswr/agentic/patterns/`, referenced from every instance with
+`dct:conformsTo`, and content-addressed by **SHA-256 over its RDFC-1.0 canonical N-Quads** — the
+[`jeswr/a2a-rdf-extension`](https://github.com/jeswr/a2a-rdf-extension) `protocolHash` mechanism
+(`sha256:` + lowercase hex), carried on the conformance node. A consumer verifies a fetched pattern
+document with `verifyPatternDocument` (fail-closed; fetch through `guarded-fetch`, never
+auto-dereferenced) and caches `(pattern hash → handler)`. This package ships the common shapes
+pre-cached (`KNOWN_PATTERN_HASHES`):
+
+| Pattern | IRI | RDFC-1.0 content-address |
+|---|---|---|
+| `sent-at` (the message envelope) | `https://w3id.org/jeswr/agentic/patterns/sent-at` | `sha256:1e0271727a8bb1d3f9ccd4cd4553c36c2490b70e31cc1aac193a3a440d27e45e` |
+| `propose-times` (§5.4 worked example) | `https://w3id.org/jeswr/agentic/patterns/propose-times` | `sha256:34f2e9a3395d6732adab7ea62c266fa5e03025b71ab1c685f3266d22f90be489` |
+
+The shape documents are the `SENT_AT_PATTERN_TURTLE` / `PROPOSE_TIMES_PATTERN_TURTLE` constants
+(unit-tested against the committed hashes, so neither can drift); publishing them at their w3id
+IRIs is a pending redirect (`needs:user`), which does not affect trust — the hash, not the URL, is
+the identity.
+
+## 6. Onboarding
 
 The reply's onboarding link (`buildReply`'s `onboardingBlock`, one unobtrusive link — `docs/DECISIONS.md`
 D4) leads to the suite's passkey-first sign-up (account + WebID + storage in one go), seeded with the

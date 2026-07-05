@@ -39,6 +39,7 @@ export { type AsyncInterpreter, actionItemsTask, DEFAULT_TASKS, type ExtractionT
 export { createHttpLlmExtractor, type HttpLlmExtractorOptions, } from "./interpret-llm-http.js";
 export { DEFAULT_MAX_ATTEMPTS, DEFAULT_MAX_GRAPH_BYTES, DEFAULT_MAX_RAW_ANCHOR_BYTES, DEFAULT_MAX_RESOURCES_PER_SWEEP, type ReparseRawAnchorOptions, reparseRawAnchor, type SweepAuditEvent, type SweepPendingInterpretationsOptions, type SweepResult, type SweepSkipReason, sweepPendingInterpretations, } from "./interpret-sweep.js";
 export { asBridgeMessage, type BridgeMessage, type BridgeSender, isBridgeMessage, toBridgeMessage, } from "./message.js";
+export * as metadata from "./metadata/index.js";
 export { asChannel, type BridgeCapability, CHANNEL_EXTENSION_URI, CHANNEL_PREFERENCE, CHANNELS_HEADER, type Channel, decideUpgrade, detectBridgeCapability, highestMutualChannel, type InboundSignals, REPLY_HEADER, type UpgradeDecision, type UpgradeOffer, type UpgradeResponse, } from "./negotiate.js";
 export { addInterpretation, type Calibration, clampConfidence, classifyReliability, DEFAULT_THRESHOLDS, type Interpretation, type InterpretationGraphContext, type InterpretationMethod, type InterpretationObject, type ReliabilityDecision, type ReliabilityThresholds, } from "./reliability.js";
 export { type BuildReplyOptions, type BuiltReply, buildReply, htmlSafeJson, type MimePart, type OfferedTime, type ReplySigner, } from "./reply.js";

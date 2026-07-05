@@ -23,6 +23,12 @@ export declare const ACL = "http://www.w3.org/ns/auth/acl#";
 export declare const LDP = "http://www.w3.org/ns/ldp#";
 /** The ONE minted namespace (reliability + raw-message anchor). w3id redirect = needs:user. */
 export declare const AGENTIC = "https://w3id.org/jeswr/agentic#";
+/**
+ * The `jeswr/a2a-rdf-extension` vocabulary (https://w3id.org/jeswr/a2a-rdf/v1) — REUSED,
+ * not minted: its `protocolHash` term is the existing suite mechanism for content-addressing
+ * an RDF document by `sha256:` over its RDFC-1.0 canonical N-Quads (metadata-protocol Rule 3).
+ */
+export declare const A2A_RDF = "https://w3id.org/jeswr/a2a-rdf/v1/";
 export declare const RDF_TYPE = "http://www.w3.org/1999/02/22-rdf-syntax-ns#type";
 export declare const XSD_DATE_TIME = "http://www.w3.org/2001/XMLSchema#dateTime";
 export declare const XSD_DECIMAL = "http://www.w3.org/2001/XMLSchema#decimal";
@@ -54,6 +60,17 @@ export declare const SCHEMA_START_TIME = "https://schema.org/startTime";
 export declare const SCHEMA_END_TIME = "https://schema.org/endTime";
 export declare const SCHEMA_ABOUT = "https://schema.org/about";
 export declare const SCHEMA_IDENTIFIER = "https://schema.org/identifier";
+/** `schema:location` — written as a plain literal (a place NAME, never markup). */
+export declare const SCHEMA_LOCATION = "https://schema.org/location";
+/** `schema:eventStatus` + the two status individuals the deterministic extractors assert. */
+export declare const SCHEMA_EVENT_STATUS = "https://schema.org/eventStatus";
+export declare const SCHEMA_EVENT_CANCELLED = "https://schema.org/EventCancelled";
+export declare const SCHEMA_EVENT_SCHEDULED = "https://schema.org/EventScheduled";
+export declare const SCHEMA_PROPOSE_ACTION = "https://schema.org/ProposeAction";
+export declare const SCHEMA_ACCEPT_ACTION = "https://schema.org/AcceptAction";
+export declare const SCHEMA_REJECT_ACTION = "https://schema.org/RejectAction";
+export declare const DCT_CONFORMS_TO = "http://purl.org/dc/terms/conformsTo";
+export declare const A2A_PROTOCOL_HASH = "https://w3id.org/jeswr/a2a-rdf/v1/protocolHash";
 export declare const FOAF_PERSON = "http://xmlns.com/foaf/0.1/Person";
 export declare const FOAF_NAME = "http://xmlns.com/foaf/0.1/name";
 export declare const FOAF_MBOX = "http://xmlns.com/foaf/0.1/mbox";
@@ -115,6 +132,8 @@ export declare const AGENTIC_INTERPRETATION_ATTEMPTS = "https://w3id.org/jeswr/a
 export declare const AGENTIC_INTERPRETATION_FAILED = "https://w3id.org/jeswr/agentic#InterpretationFailed";
 /** A deterministically-classified reply polarity: `"affirmative"` / `"negative"` (no standard term exists). */
 export declare const AGENTIC_REPLY_POLARITY = "https://w3id.org/jeswr/agentic#replyPolarity";
+/** The reply linkage to a raw-message anchor (`urn:agentic:raw:…`) — the buildReply carrier term. */
+export declare const AGENTIC_IN_REPLY_TO = "https://w3id.org/jeswr/agentic#inReplyTo";
 /** The relationship-resource type. */
 export declare const AGENTIC_RELATIONSHIP = "https://w3id.org/jeswr/agentic#Relationship";
 /** The current state of the upgrade relationship (one of the closed state set below). */

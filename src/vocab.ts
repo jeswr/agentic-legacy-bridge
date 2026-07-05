@@ -26,6 +26,12 @@ export const ACL = "http://www.w3.org/ns/auth/acl#";
 export const LDP = "http://www.w3.org/ns/ldp#";
 /** The ONE minted namespace (reliability + raw-message anchor). w3id redirect = needs:user. */
 export const AGENTIC = "https://w3id.org/jeswr/agentic#";
+/**
+ * The `jeswr/a2a-rdf-extension` vocabulary (https://w3id.org/jeswr/a2a-rdf/v1) — REUSED,
+ * not minted: its `protocolHash` term is the existing suite mechanism for content-addressing
+ * an RDF document by `sha256:` over its RDFC-1.0 canonical N-Quads (metadata-protocol Rule 3).
+ */
+export const A2A_RDF = "https://w3id.org/jeswr/a2a-rdf/v1/";
 
 // --- rdf / xsd ---
 export const RDF_TYPE = `${RDF}type`;
@@ -65,6 +71,21 @@ export const SCHEMA_START_TIME = `${SCHEMA}startTime`;
 export const SCHEMA_END_TIME = `${SCHEMA}endTime`;
 export const SCHEMA_ABOUT = `${SCHEMA}about`;
 export const SCHEMA_IDENTIFIER = `${SCHEMA}identifier`;
+/** `schema:location` — written as a plain literal (a place NAME, never markup). */
+export const SCHEMA_LOCATION = `${SCHEMA}location`;
+/** `schema:eventStatus` + the two status individuals the deterministic extractors assert. */
+export const SCHEMA_EVENT_STATUS = `${SCHEMA}eventStatus`;
+export const SCHEMA_EVENT_CANCELLED = `${SCHEMA}EventCancelled`;
+export const SCHEMA_EVENT_SCHEDULED = `${SCHEMA}EventScheduled`;
+// The CLOSED action-type set an inbound AgenticReply block may declare (schema.org).
+export const SCHEMA_PROPOSE_ACTION = `${SCHEMA}ProposeAction`;
+export const SCHEMA_ACCEPT_ACTION = `${SCHEMA}AcceptAction`;
+export const SCHEMA_REJECT_ACTION = `${SCHEMA}RejectAction`;
+
+// --- dct (reused for pattern conformance — metadata-protocol Rule 3) ---
+export const DCT_CONFORMS_TO = `${DCT}conformsTo`;
+// --- a2a-rdf (reused for the pattern content-address) ---
+export const A2A_PROTOCOL_HASH = `${A2A_RDF}protocolHash`;
 
 // --- foaf / vcard (reused for the person) ---
 export const FOAF_PERSON = `${FOAF}Person`;
@@ -134,6 +155,8 @@ export const AGENTIC_INTERPRETATION_ATTEMPTS = `${AGENTIC}interpretationAttempts
 export const AGENTIC_INTERPRETATION_FAILED = `${AGENTIC}InterpretationFailed`;
 /** A deterministically-classified reply polarity: `"affirmative"` / `"negative"` (no standard term exists). */
 export const AGENTIC_REPLY_POLARITY = `${AGENTIC}replyPolarity`;
+/** The reply linkage to a raw-message anchor (`urn:agentic:raw:…`) — the buildReply carrier term. */
+export const AGENTIC_IN_REPLY_TO = `${AGENTIC}inReplyTo`;
 
 // --- channel-upgrade relationship state machine (M2-DESIGN.md §4.1) -----------
 // One owner-private `agentic:Relationship` resource per counterparty person node
@@ -182,4 +205,5 @@ export const PREFIXES: Readonly<Record<string, string>> = Object.freeze({
   acl: ACL,
   ldp: LDP,
   agentic: AGENTIC,
+  a2a: A2A_RDF,
 });

@@ -37,6 +37,25 @@ choices in [`docs/DECISIONS.md`](./docs/DECISIONS.md).
 
 Persistence (`importInbound`) is **owner-private** (fail-closed ACL written first).
 
+## The metadata protocol (M2.6 — deterministic first, LLM last)
+
+The `./metadata` subexport implements `NOW-PERSONAL-AGENT.md` §5 (documented in `PROTOCOL.md` §5):
+
+- **Inbound (Rule 1):** `structuredMetadataInterpreter` (a drop-in sync `Interpreter`) /
+  `extractStructuredMetadata` (async, verifier-aware) read the machine-readable metadata senders
+  already emit — Gmail-markup **schema.org JSON-LD**, **`text/calendar` VEVENTs** (invites,
+  cancellations), and a peer's **`AgenticReply`** carrier — with fixed code at deterministic
+  confidence, before any model reads anything. `composeInterpreters(structuredMetadataInterpreter,
+  deterministicInterpreter)` chains structured-first with the prose fallback.
+- **Outbound (Rule 2):** `buildReply({ dateSent, sender, … })` carries the sent-at envelope on every
+  reply; `buildActionMetadata` emits the standalone signed "sent at *time*" descriptor
+  (schema.org + PROV, minting nothing).
+- **Patterns (Rule 3):** exchange shapes are SHACL documents at stable IRIs, content-addressed by
+  SHA-256 over RDFC-1.0 (the `a2a-rdf-extension` `protocolHash` mechanism) and referenced via
+  `dct:conformsTo` — a peer learns each pattern once, caches `(hash → handler)`, and runs LLM-free
+  thereafter. `sent-at` and `propose-times` ship pre-cached (`KNOWN_PATTERN_HASHES`,
+  `verifyPatternDocument`).
+
 ## Install (GitHub-installable, no build step)
 
 The built `dist/` is committed, so under `ignore-scripts=true` a consumer needs no build step:
@@ -241,7 +260,12 @@ transport is an **injectable seam** defaulting to `@jeswr/guarded-fetch`'s DNS-p
   Gmail / Microsoft Graph adapters — each behind the `ChannelAdapter` seam, guarded-fetch for reads.
 - **Live LLM interpreter:** an adapter over `@jeswr/solid-a2a` `parseIntent({ translate })` implementing
   the same `Interpreter` interface (method `LlmInterpretation`).
-- **Reply signing:** a `@jeswr/solid-vc` Data-Integrity signer for the `sign` seam.
+- **Reply signing + verification:** a `@jeswr/solid-vc` Data-Integrity signer for the `sign` seam
+  and the matching `AgenticReplyVerifier` adapter (until injected, inbound `AgenticReply` blocks
+  stay `SelfReported` — never auto-run).
+- **More pattern shapes:** `accept-time`, `decline-with-alternatives`, `request-document` — same
+  SHACL + RDFC-1.0-hash mechanism as `sent-at`/`propose-times`; and the FlightReservation /
+  ParcelDelivery Gmail-markup families in the JSON-LD extractor's closed table.
 - **Onboarding + negotiation transport:** the running service (passkey onboarding, live agent-card
   discovery via `@jeswr/solid-agent-card`, the `solid-a2a` upgrade codec over the wire).
 - **Candidate-WebID discovery:** the `solid-webid-index` + `.well-known/webid` lookups §2.1 describes.
@@ -249,5 +273,6 @@ transport is an **injectable seam** defaulting to `@jeswr/guarded-fetch`'s DNS-p
 
 ## Provenance
 
-Authored by the PSS agent (Claude Opus 4.8) — the session model for this security-sensitive
-hostile-input package. Reviewed by codex via roborev (`.roborev.toml`). MIT.
+Authored by the PSS agent — M1–M2.5a by Claude Opus 4.8 (the then-session model for this
+security-sensitive hostile-input package), the M2.6 metadata protocol by Claude Fable 5. Reviewed
+by codex via roborev (`.roborev.toml`). MIT.

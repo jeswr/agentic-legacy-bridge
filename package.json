@@ -17,6 +17,10 @@
     "./webhook": {
       "types": "./dist/webhook/index.d.ts",
       "import": "./dist/webhook/index.js"
+    },
+    "./metadata": {
+      "types": "./dist/metadata/index.d.ts",
+      "import": "./dist/metadata/index.js"
     }
   },
   "files": [
@@ -34,6 +38,7 @@
     "test:watch": "vitest",
     "check:dist": "node scripts/check-dist.mjs",
     "check:lockfile-transport": "node scripts/check-lockfile-transport.mjs",
+    "fix:lockfile-transport": "node scripts/normalize-lockfile.mjs",
     "gate": "npm run lint && npm run typecheck && npm run test && npm run build && npm run check:dist"
   },
   "keywords": [
@@ -62,7 +67,8 @@
     "@jeswr/fetch-rdf": "^0.1.0",
     "@jeswr/guarded-fetch": "git+https://github.com/jeswr/guarded-fetch.git#bd4490927fd36d62f6b78a0021e8d40bbb572c3b",
     "@jeswr/solid-chat-interop": "git+https://github.com/jeswr/solid-chat-interop.git#f48de5a17f06dd1be5514d6a9d62b26107304c93",
-    "n3": "^2.0.3"
+    "n3": "^2.0.3",
+    "rdf-canonize": "5.0.0"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.0.0",

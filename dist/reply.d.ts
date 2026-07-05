@@ -39,6 +39,14 @@ export interface BuildReplyOptions {
     /** The replying agent's issuer WebID (the VC issuer). http(s) only. */
     readonly issuer?: string;
     /**
+     * When this reply was sent (ISO-8601 → canonical UTC) — the metadata-protocol
+     * Rule-2 "sent-at" envelope every reply should carry (`schema:dateSent` +
+     * `dct:conformsTo` the content-addressed `sent-at` pattern). Invalid → omitted.
+     */
+    readonly dateSent?: string;
+    /** The sending agent IRI (`schema:sender`). http(s) only; invalid → omitted. */
+    readonly sender?: string;
+    /**
      * An injectable signer. When provided, the credential is signed (Data Integrity
      * over the canonical graph — the M2 `solid-vc` adapter) and typed
      * `VerifiableCredential`. When absent, the payload is an honest UNSIGNED reply.
@@ -65,6 +73,14 @@ export interface BuiltReply {
     /** A plain-text onboarding block for the human body, when an onboarding URL was given. */
     readonly onboardingBlock?: string;
 }
+/**
+ * The self-contained JSON-LD context (every term defined → deterministic RDFC-1.0).
+ * Shared with {@link import("./metadata/emit.js").buildActionMetadata} — the envelope
+ * terms (`dateSent`/`sender`/`conformsTo`/`protocolHash` + the PROV attribution set)
+ * implement metadata-protocol Rules 2–3 (`NOW-PERSONAL-AGENT.md` §5.2–5.3), reusing
+ * schema.org / Dublin Core / PROV / the a2a-rdf extension — minting nothing.
+ */
+export declare const INLINE_CONTEXT: readonly unknown[];
 /**
  * Build the structured reply carrier. Pure + hermetic (the only async is an optional
  * injected signer). Invalid offered times are dropped; unsafe URLs are omitted.

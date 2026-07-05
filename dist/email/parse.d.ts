@@ -30,10 +30,29 @@ import type { EmailMessage } from "./types.js";
 export declare class EmailParseError extends ChannelParseError {
     constructor(message: string);
 }
+/** A bounded warnings collector (so a pathological input cannot grow it without limit). */
+declare class Warnings {
+    private readonly list;
+    private static readonly MAX;
+    add(msg: string): void;
+    values(): string[];
+}
+/**
+ * Extract the contents of `<script type="application/ld+json">…</script>` blocks from
+ * an (untrusted) HTML body — the Gmail email-markup carrier and this package's own
+ * {@link import("../reply.js").buildReply} inline block. LINEAR `indexOf`-driven single
+ * pass (never a backtracking regex — same rationale as {@link stripTags}); every cursor
+ * only moves forward, so no character is scanned twice. Count/size-capped. The captured
+ * text is the RAW script content (HTML defines script as a raw-text element — entities
+ * are NOT decoded inside it), control-stripped; parsing/validating the JSON is the
+ * deterministic extractor's job, fail-closed.
+ */
+export declare function extractJsonLdScripts(html: string, collected: string[], w: Warnings): void;
 /**
  * Parse raw email bytes/text into an {@link EmailMessage}. Fail-closed + never
  * hangs; the only throw is {@link EmailParseError} when the input exceeds the hard
  * byte cap. All other malformations degrade with a `warnings` entry.
  */
 export declare function parseEmail(input: string | Uint8Array): EmailMessage;
+export {};
 //# sourceMappingURL=parse.d.ts.map

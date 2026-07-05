@@ -17,8 +17,14 @@
  * inline JSON is HTML-escaped so it cannot break out of the `<script>` element.
  */
 
+import {
+  PROPOSE_TIMES_PATTERN_HASH,
+  PROPOSE_TIMES_PATTERN_IRI,
+  SENT_AT_PATTERN_HASH,
+  SENT_AT_PATTERN_IRI,
+} from "./metadata/patterns.js";
 import { safeHttpIri, sanitizeText } from "./safe-iri.js";
-import { AGENTIC } from "./vocab.js";
+import { A2A_RDF, AGENTIC, DCT, PROV } from "./vocab.js";
 
 /** A proposed meeting time in the reply (a `schema:Event`). */
 export interface OfferedTime {
@@ -47,6 +53,14 @@ export interface BuildReplyOptions {
   readonly onboardingUrl?: string;
   /** The replying agent's issuer WebID (the VC issuer). http(s) only. */
   readonly issuer?: string;
+  /**
+   * When this reply was sent (ISO-8601 → canonical UTC) — the metadata-protocol
+   * Rule-2 "sent-at" envelope every reply should carry (`schema:dateSent` +
+   * `dct:conformsTo` the content-addressed `sent-at` pattern). Invalid → omitted.
+   */
+  readonly dateSent?: string;
+  /** The sending agent IRI (`schema:sender`). http(s) only; invalid → omitted. */
+  readonly sender?: string;
   /**
    * An injectable signer. When provided, the credential is signed (Data Integrity
    * over the canonical graph — the M2 `solid-vc` adapter) and typed
@@ -80,24 +94,49 @@ export interface BuiltReply {
 const MAX_NAME_CHARS = 200;
 const MAX_OFFERS = 32;
 
-/** The self-contained JSON-LD context (every term defined → deterministic RDFC-1.0). */
-const INLINE_CONTEXT: readonly unknown[] = [
+/**
+ * The self-contained JSON-LD context (every term defined → deterministic RDFC-1.0).
+ * Shared with {@link import("./metadata/emit.js").buildActionMetadata} — the envelope
+ * terms (`dateSent`/`sender`/`conformsTo`/`protocolHash` + the PROV attribution set)
+ * implement metadata-protocol Rules 2–3 (`NOW-PERSONAL-AGENT.md` §5.2–5.3), reusing
+ * schema.org / Dublin Core / PROV / the a2a-rdf extension — minting nothing.
+ */
+export const INLINE_CONTEXT: readonly unknown[] = [
   "https://www.w3.org/ns/credentials/v2",
   {
     agentic: AGENTIC,
     schema: "https://schema.org/",
     xsd: "http://www.w3.org/2001/XMLSchema#",
+    dct: DCT,
+    a2a: A2A_RDF,
+    prov: PROV,
     AgenticReply: "agentic:AgenticReply",
     ProposeAction: "schema:ProposeAction",
     Event: "schema:Event",
+    Message: "schema:Message",
     name: "schema:name",
     startTime: { "@id": "schema:startTime", "@type": "xsd:dateTime" },
     endTime: { "@id": "schema:endTime", "@type": "xsd:dateTime" },
     object: { "@id": "schema:object", "@container": "@set" },
     inReplyTo: "agentic:inReplyTo",
     onboarding: "agentic:onboarding",
+    dateSent: { "@id": "schema:dateSent", "@type": "xsd:dateTime" },
+    sender: { "@id": "schema:sender", "@type": "@id" },
+    conformsTo: { "@id": "dct:conformsTo", "@type": "@id", "@container": "@set" },
+    protocolHash: "a2a:protocolHash",
+    wasAttributedTo: { "@id": "prov:wasAttributedTo", "@type": "@id" },
+    wasDerivedFrom: { "@id": "prov:wasDerivedFrom", "@type": "@id" },
+    qualifiedAssociation: { "@id": "prov:qualifiedAssociation" },
+    Association: "prov:Association",
+    agent: { "@id": "prov:agent", "@type": "@id" },
+    hadPlan: { "@id": "prov:hadPlan", "@type": "@id" },
   },
 ];
+
+/** A `dct:conformsTo` entry binding a pattern IRI to its `sha256:` content-address. */
+function conformanceEntry(iri: string, protocolHash: string): Record<string, unknown> {
+  return { "@id": iri, protocolHash };
+}
 
 /**
  * Build the structured reply carrier. Pure + hermetic (the only async is an optional
@@ -122,6 +161,21 @@ export async function buildReply(options: BuildReplyOptions): Promise<BuiltReply
   const onboarding = safeHttpIri(options.onboardingUrl);
   if (onboarding !== undefined) subject.onboarding = onboarding;
   if (events.length > 0) subject.object = events;
+
+  // The Rule-2 sent-at envelope + the Rule-3 pattern conformances (content-addressed
+  // by their RDFC-1.0 hash so a peer learns each pattern ONCE, then goes LLM-free).
+  const dateSent = isoOrUndefined(options.dateSent);
+  if (dateSent !== undefined) subject.dateSent = dateSent;
+  const sender = safeHttpIri(options.sender);
+  if (sender !== undefined) subject.sender = sender;
+  const conformances: Record<string, unknown>[] = [];
+  if (dateSent !== undefined) {
+    conformances.push(conformanceEntry(SENT_AT_PATTERN_IRI, SENT_AT_PATTERN_HASH));
+  }
+  if (events.length > 0) {
+    conformances.push(conformanceEntry(PROPOSE_TIMES_PATTERN_IRI, PROPOSE_TIMES_PATTERN_HASH));
+  }
+  if (conformances.length > 0) subject.conformsTo = conformances;
 
   const issuer = safeHttpIri(options.issuer);
   const base: Record<string, unknown> = {

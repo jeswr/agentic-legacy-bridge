@@ -58,6 +58,14 @@ const MAX_TEXT_BODY_CHARS = 512 * 1024;
 const MAX_ADDRESSES = 256;
 /** Cap on decoded content bytes per leaf part (post-CTE). */
 const MAX_PART_BYTES = 8 * 1024 * 1024;
+/** Cap on collected machine-readable JSON-LD blocks per message (Rule-1 extraction). */
+const MAX_JSONLD_BLOCKS = 8;
+/** Cap on a single collected JSON-LD block's length (chars). */
+const MAX_JSONLD_CHARS = 64 * 1024;
+/** Cap on collected `text/calendar` parts per message. */
+const MAX_CALENDAR_PARTS = 4;
+/** Cap on a single collected `text/calendar` part's length (chars). */
+const MAX_CALENDAR_CHARS = 256 * 1024;
 /**
  * A controlled, typed, fail-closed refusal (the only throw from {@link parseEmail}).
  * Extends the channel-neutral `ChannelParseError` (M2.0) so `importInbound`'s
@@ -382,9 +390,11 @@ function extractText(bodyLatin1, contentTypeValue, cteValue, depth, ctx) {
                 plain = got.plain;
             if (html === undefined && got.html !== undefined)
                 html = got.html;
-            // A text/plain anywhere wins; stop scanning once we have it.
-            if (plain !== undefined)
-                break;
+            // A text/plain anywhere wins (first one kept) — but keep WALKING the rest of the
+            // tree: a typical invite is multipart/alternative { text/plain, text/html,
+            // text/calendar }, and the structured parts (text/calendar, application/ld+json,
+            // the html the JSON-LD scanner reads) live in the LATER siblings. The walk stays
+            // bounded by MAX_PARTS / MAX_MIME_DEPTH / the per-part byte cap regardless.
         }
         return { ...(plain !== undefined ? { plain } : {}), ...(html !== undefined ? { html } : {}) };
     }
@@ -409,8 +419,76 @@ function extractText(bodyLatin1, contentTypeValue, cteValue, depth, ctx) {
     if (ct.type === "text/html") {
         return { html: text };
     }
+    // Structured machine-readable parts (metadata-protocol Rule 1): collect the decoded
+    // text — count/size-capped, control-stripped — for the deterministic extractors.
+    // They contribute no human-readable text body.
+    if (ct.type === "text/calendar") {
+        if (ctx.calendars.length >= MAX_CALENDAR_PARTS) {
+            ctx.w.add(`more than ${MAX_CALENDAR_PARTS} text/calendar parts; extras ignored.`);
+        }
+        else if (text.length > MAX_CALENDAR_CHARS) {
+            ctx.w.add("a text/calendar part exceeded the size cap and was ignored.");
+        }
+        else {
+            ctx.calendars.push(sanitizeText(text));
+        }
+        return {};
+    }
+    if (ct.type === "application/ld+json") {
+        if (ctx.jsonLd.length >= MAX_JSONLD_BLOCKS) {
+            ctx.w.add(`more than ${MAX_JSONLD_BLOCKS} JSON-LD blocks; extras ignored.`);
+        }
+        else if (text.length > MAX_JSONLD_CHARS) {
+            ctx.w.add("an application/ld+json part exceeded the size cap and was ignored.");
+        }
+        else {
+            ctx.jsonLd.push(sanitizeText(text));
+        }
+        return {};
+    }
     // Any other leaf (image, application/*, …) contributes no text body.
     return {};
+}
+/**
+ * Extract the contents of `<script type="application/ld+json">…</script>` blocks from
+ * an (untrusted) HTML body — the Gmail email-markup carrier and this package's own
+ * {@link import("../reply.js").buildReply} inline block. LINEAR `indexOf`-driven single
+ * pass (never a backtracking regex — same rationale as {@link stripTags}); every cursor
+ * only moves forward, so no character is scanned twice. Count/size-capped. The captured
+ * text is the RAW script content (HTML defines script as a raw-text element — entities
+ * are NOT decoded inside it), control-stripped; parsing/validating the JSON is the
+ * deterministic extractor's job, fail-closed.
+ */
+export function extractJsonLdScripts(html, collected, w) {
+    const capped = html.length > MAX_HTML_CHARS ? html.slice(0, MAX_HTML_CHARS) : html;
+    const lower = capped.toLowerCase();
+    let i = 0;
+    while (i < capped.length && collected.length < MAX_JSONLD_BLOCKS) {
+        const start = lower.indexOf("<script", i);
+        if (start === -1)
+            break;
+        const tagEnd = lower.indexOf(">", start + 7);
+        if (tagEnd === -1)
+            break; // unterminated open tag → nothing further can be a block
+        i = tagEnd + 1;
+        // Only the attribute area (bounded slice) decides the type — a hostile mile-long
+        // attribute run cannot force a long substring search.
+        const attrs = lower.slice(start + 7, Math.min(tagEnd, start + 7 + 1024));
+        if (!attrs.includes("application/ld+json"))
+            continue;
+        const close = lower.indexOf("</script", tagEnd + 1);
+        if (close === -1)
+            break; // unterminated block → drop (never guess at a boundary)
+        const content = capped.slice(tagEnd + 1, close);
+        i = close + 9;
+        if (content.length > MAX_JSONLD_CHARS) {
+            w.add("a JSON-LD script block exceeded the size cap and was ignored.");
+            continue;
+        }
+        const trimmed = sanitizeText(content).trim();
+        if (trimmed !== "")
+            collected.push(trimmed);
+    }
 }
 /**
  * Trim trailing SPACE/TAB from a line via a LINEAR backward walk. Replaces a
@@ -804,8 +882,13 @@ export function parseEmail(input) {
     const rawLatin1 = buf.toString("latin1");
     const { headerText, body } = splitHeaderBody(rawLatin1, w);
     const headers = parseHeaders(headerText, w);
-    const ctx = { parts: 0, w };
+    const ctx = { parts: 0, w, calendars: [], jsonLd: [] };
     const extracted = extractText(body, headerValue(headers, "content-type"), headerValue(headers, "content-transfer-encoding"), 0, ctx);
+    // Rule-1 structured metadata: JSON-LD blocks embedded in the HTML body (Gmail
+    // email-markup / an AgenticReply carrier) join any application/ld+json MIME parts.
+    if (extracted.html !== undefined) {
+        extractJsonLdScripts(extracted.html, ctx.jsonLd, w);
+    }
     let textBody;
     if (extracted.plain !== undefined) {
         textBody = extracted.plain;
@@ -840,6 +923,8 @@ export function parseEmail(input) {
         ...(inReplyTo !== undefined ? { inReplyTo } : {}),
         ...(dkimDomain !== undefined ? { dkimDomain } : {}),
         textBody,
+        ...(ctx.jsonLd.length > 0 ? { jsonLdBlocks: ctx.jsonLd } : {}),
+        ...(ctx.calendars.length > 0 ? { calendarParts: ctx.calendars } : {}),
         headers,
         rawSha256,
         rawByteLength: buf.length,

@@ -159,12 +159,16 @@ export function addInterpretation(
   ) {
     return undefined;
   }
-  // Object: an IRI must be safe; a literal is control-stripped, datatype validated.
+  // Object: an IRI must be safe — an injection-safe http(s) IRI, or one of the tight
+  // `urn:` anchors this package itself mints (`asUrn` — the same pair already used for
+  // `rawMessageIri`/`docIri`, so a reply-linkage datum can assert its
+  // `agentic:inReplyTo urn:agentic:raw:…` anchor). A literal is control-stripped,
+  // datatype validated. Fail-closed either way.
   let objectAdd: (() => void) | undefined;
   const interpIri = `${docBase}#interp-${index}`;
   const interpNode = namedNode(interpIri);
   if (interp.object.kind === "iri") {
-    const objIri = safeHttpIri(interp.object.value);
+    const objIri = safeHttpIri(interp.object.value) ?? asUrn(interp.object.value);
     if (objIri === undefined) return undefined;
     objectAdd = () =>
       store.addQuad(interpNode, namedNode(AGENTIC_ASSERTS_OBJECT_IRI), namedNode(objIri));
