@@ -1,0 +1,253 @@
+// AUTHORED-BY Claude Fable 5
+/**
+ * The channel-upgrade ORCHESTRATION (M2-DESIGN.md §4) — ties the pure state machine
+ * ({@link ./upgrade-state.ts}) to (a) a pod-persisted {@link RelationshipStore} and
+ * (b) an injectable {@link UpgradeTransport} for the live probe/offer/accept network
+ * steps. Every network-touching seam is injected, so the whole layer is testable with
+ * NO live network or credentials; the default transport routes through
+ * `@jeswr/guarded-fetch`'s DNS-pinning node fetch (SSRF-safe, https-only,
+ * redirect-refusing).
+ *
+ * ## The two SSRF-critical invariants this layer preserves (M2-DESIGN.md §4.1/§6)
+ *
+ *  1. **A counterparty-suggested URL is NEVER fetched.** Agent-card discovery is called
+ *     ONLY with the counterparty's control-of-both–VERIFIED WebID (state
+ *     `identity-verified`), never a candidate URL from a spoofable inbound handle; and
+ *     the offer transport targets ONLY the VERIFIED agent-card endpoint recorded at
+ *     `card-discovered`, never a payload-derived URL.
+ *  2. **All outbound goes through the guard.** The default transport is the DNS-pinned
+ *     guarded fetch; a target is re-validated `safeHttpIri` + https-only before the
+ *     call, defence-in-depth over the guard itself.
+ *
+ * State persistence is optimistic-concurrency safe: {@link RelationshipStore.load}
+ * returns an opaque `version` (an ETag on the pod store) that `save` echoes as an
+ * `If-Match` precondition — a concurrent update fails a `RelationshipConflictError`
+ * rather than silently clobbering (a lost-update guard on a state machine that gates
+ * security decisions).
+ */
+import { createNodeGuardedFetch } from "@jeswr/guarded-fetch/node";
+import { assertNoRedirect, assertWritableUrl } from "./import.js";
+import { base64Url, canonicalContainer, safeHttpIri } from "./safe-iri.js";
+import { initialRelationship, parseRelationship, serializeRelationship, transition, } from "./upgrade-state.js";
+/** Thrown by a {@link RelationshipStore.save} whose optimistic precondition failed. */
+export class RelationshipConflictError extends Error {
+    constructor(message) {
+        super(message);
+        this.name = "RelationshipConflictError";
+    }
+}
+/** A hermetic in-memory {@link RelationshipStore} (tests + single-process) with CAS. */
+export class InMemoryRelationshipStore {
+    byPerson = new Map();
+    load(personIri) {
+        const entry = this.byPerson.get(personIri);
+        return Promise.resolve(entry === undefined ? undefined : { state: entry.state, version: String(entry.version) });
+    }
+    save(state, expectedVersion) {
+        const entry = this.byPerson.get(state.personIri);
+        const currentVersion = entry === undefined ? undefined : String(entry.version);
+        if (currentVersion !== expectedVersion) {
+            return Promise.reject(new RelationshipConflictError(`relationship save conflict for ${state.personIri} (expected ${expectedVersion ?? "<new>"}, have ${currentVersion ?? "<new>"}).`));
+        }
+        const nextVersion = (entry?.version ?? 0) + 1;
+        this.byPerson.set(state.personIri, { state, version: nextVersion });
+        return Promise.resolve();
+    }
+}
+/**
+ * A pod-backed {@link RelationshipStore}: one owner-private Turtle resource per
+ * counterparty (`<container>rel-<base64url(personIri)>.ttl`), (de)serialised via the
+ * typed {@link serializeRelationship}/{@link parseRelationship}. `save` uses `If-Match`
+ * (the loaded ETag) — or `If-None-Match: *` for a brand-new resource — for optimistic
+ * concurrency, and refuses redirects on every request. Every resource URL is
+ * scope-guarded strictly within the container.
+ */
+export function createPodRelationshipStore(options) {
+    const container = canonicalContainer(options.container);
+    if (container === undefined) {
+        throw new Error("relationship store: container must be a safe canonical container IRI.");
+    }
+    const writeFetch = options.writeFetch;
+    const readFetch = options.readFetch ?? options.writeFetch;
+    const urlFor = (personIri) => assertWritableUrl(`${container}rel-${base64Url(personIri)}.ttl`, container);
+    return {
+        async load(personIri) {
+            const url = urlFor(personIri);
+            const res = await readFetch(url, { method: "GET", redirect: "manual" });
+            assertNoRedirect(res, "GET", url);
+            if (res.status === 404)
+                return undefined;
+            if (!res.ok) {
+                throw new Error(`relationship load failed: GET ${url} -> ${res.status} ${res.statusText}`);
+            }
+            const turtle = await res.text();
+            const state = parseRelationship(turtle, url);
+            if (state === undefined)
+                return undefined; // unparseable → treat as no state (fail-closed)
+            const etag = res.headers.get("etag");
+            return etag !== null ? { state, version: etag } : { state };
+        },
+        async save(state, expectedVersion) {
+            const url = urlFor(state.personIri);
+            const turtle = await serializeRelationship(state, url);
+            const headers = { "content-type": "text/turtle" };
+            if (expectedVersion !== undefined)
+                headers["if-match"] = expectedVersion;
+            else
+                headers["if-none-match"] = "*"; // a brand-new resource must not already exist
+            const res = await writeFetch(url, {
+                method: "PUT",
+                headers,
+                body: turtle,
+                redirect: "manual",
+            });
+            assertNoRedirect(res, "PUT", url);
+            if (res.status === 412 || res.status === 409) {
+                throw new RelationshipConflictError(`relationship save conflict for ${state.personIri} (precondition failed on PUT ${url}).`);
+            }
+            if (!res.ok) {
+                throw new Error(`relationship save failed: PUT ${url} -> ${res.status} ${res.statusText}`);
+            }
+        },
+    };
+}
+const DEFAULT_MAX_RESPONSE_BYTES = 256 * 1024;
+/**
+ * The default SSRF-safe upgrade transport: POST the JSON payload to the VERIFIED target
+ * through `@jeswr/guarded-fetch`'s DNS-pinning node fetch. The target is re-validated
+ * `safeHttpIri` + **https-only** before the call, redirects are refused, and the
+ * response is size-capped. A counterparty-supplied URL can never reach here — the
+ * orchestration only ever passes a verified endpoint.
+ */
+export function createGuardedUpgradeTransport(options = {}) {
+    const fetchImpl = options.fetch ?? createNodeGuardedFetch();
+    const maxResponseBytes = options.maxResponseBytes ?? DEFAULT_MAX_RESPONSE_BYTES;
+    return async ({ target, payload }) => {
+        const safe = safeHttpIri(target);
+        if (safe === undefined || new URL(safe).protocol !== "https:") {
+            throw new Error("upgrade transport: target must be a safe https IRI.");
+        }
+        const res = await fetchImpl(safe, {
+            method: "POST",
+            headers: { "content-type": "application/json", ...options.headers },
+            body: JSON.stringify(payload),
+            redirect: "manual",
+        });
+        if (res.status >= 300 && res.status < 400) {
+            throw new Error("upgrade transport: refusing to follow a redirect.");
+        }
+        if (!res.ok) {
+            throw new Error(`upgrade transport failed: ${res.status} ${res.statusText}`);
+        }
+        const text = (await res.text()).slice(0, maxResponseBytes);
+        try {
+            return JSON.parse(text);
+        }
+        catch {
+            return undefined; // an unparseable response decodes fail-closed to a decline
+        }
+    };
+}
+/** The wire shape of an upgrade offer (mirrors `@jeswr/solid-a2a`'s `encodeUpgradeOffer`). */
+export function encodeUpgradeOffer(offer) {
+    return {
+        type: "agentic-upgrade-offer",
+        targetChannel: offer.targetChannel,
+        required: offer.required === true,
+        ...(offer.protocolHash !== undefined ? { protocolHash: offer.protocolHash } : {}),
+        ...(offer.protocolSource !== undefined ? { protocolSource: offer.protocolSource } : {}),
+    };
+}
+/**
+ * Decode an UNTRUSTED peer response into an {@link UpgradeResponse}, fail-closed: only a
+ * strict boolean `accept: true` is an acceptance (anything else — missing, wrong type, a
+ * malformed body — is a DECLINE, which `decideUpgrade` then resolves to abort-if-required
+ * / stay-if-optional). A `protocolHash` is carried only when it is a string.
+ */
+export function decodeUpgradeResponse(raw) {
+    if (typeof raw !== "object" || raw === null)
+        return { accept: false };
+    const rec = raw;
+    const accept = rec.accept === true;
+    const protocolHash = typeof rec.protocolHash === "string" ? rec.protocolHash : undefined;
+    return { accept, ...(protocolHash !== undefined ? { protocolHash } : {}) };
+}
+/** Load-transition-save a relationship, creating the initial state if none exists. */
+async function advance(store, personIri, event, now) {
+    const loaded = await store.load(personIri);
+    const current = loaded?.state ?? initialRelationship(personIri, "email", now);
+    const result = transition(current, event, now);
+    if (!result.ok)
+        return result;
+    await store.save(result.state, loaded?.version);
+    return result;
+}
+/** Record that an inbound message showed bridge markers (legacy-only → bridge-detected). */
+export function recordBridgeDetected(store, personIri, now) {
+    return advance(store, personIri, { kind: "bridge-detected" }, now);
+}
+/** Record a completed control-of-both identity verification (§4.3). */
+export function recordIdentityVerified(store, personIri, webId, now) {
+    return advance(store, personIri, { kind: "identity-verified", webId }, now);
+}
+/**
+ * Discover + bind the counterparty's agent card — GATED on `identity-verified`. The
+ * SSRF-critical `discover` seam is invoked ONLY with the VERIFIED WebID (never a
+ * candidate/payload URL). On success, advances to `card-discovered`.
+ */
+export async function discoverCard(store, personIri, discover, now) {
+    const loaded = await store.load(personIri);
+    if (loaded === undefined)
+        return { ok: false, reason: "no relationship for counterparty." };
+    const current = loaded.state;
+    if (current.state !== "identity-verified" || current.verifiedWebId === undefined) {
+        return { ok: false, reason: "discovery is gated on a verified identity." };
+    }
+    const found = await discover(current.verifiedWebId);
+    if (found === undefined)
+        return { ok: false, reason: "no bindable agent card discovered." };
+    const result = transition(current, { kind: "card-discovered", agentCardUrl: found.agentCardUrl }, now);
+    if (!result.ok)
+        return result;
+    await store.save(result.state, loaded.version);
+    return result;
+}
+/**
+ * Send an {@link UpgradeOffer} to the verified card endpoint via the injectable
+ * transport, then resolve the peer's response through `decideUpgrade` fail-closed. The
+ * transport target is the VERIFIED `agentCardUrl` only. The intermediate `offer-pending`
+ * is transient (not persisted): a transport failure leaves the relationship at
+ * `card-discovered` (retryable). The RESOLVED state (upgraded / stay / aborted) is
+ * persisted with the loaded version (optimistic concurrency).
+ */
+export async function offerAndNegotiate(store, personIri, offer, transport, now) {
+    const loaded = await store.load(personIri);
+    if (loaded === undefined)
+        return { ok: false, reason: "no relationship for counterparty." };
+    const offered = transition(loaded.state, { kind: "offer", offer }, now);
+    if (!offered.ok)
+        return offered;
+    const target = offered.state.agentCardUrl;
+    if (target === undefined)
+        return { ok: false, reason: "no verified card endpoint to offer to." };
+    const raw = await transport({ target, payload: encodeUpgradeOffer(offer) });
+    const response = decodeUpgradeResponse(raw);
+    const resolved = transition(offered.state, { kind: "offer-response", response }, now);
+    if (!resolved.ok)
+        return resolved;
+    await store.save(resolved.state, loaded.version);
+    return resolved;
+}
+/**
+ * Record a send failure on the upgraded channel. A NON-security message falls back to
+ * the legacy floor (`card-discovered`, notify the owner); a `securityBearing` failure
+ * NEVER silently falls back — it aborts + surfaces.
+ */
+export function recordTransportFailure(store, personIri, securityBearing, now) {
+    return advance(store, personIri, { kind: "transport-failure", securityBearing }, now);
+}
+/** The owner revokes a verified WebID → the relationship drops to `bridge-detected`. */
+export function revokeVerification(store, personIri, now) {
+    return advance(store, personIri, { kind: "revoke-verification" }, now);
+}
+//# sourceMappingURL=upgrade.js.map

@@ -31,19 +31,31 @@ import { deterministicInterpreter } from "./interpret.js";
 import { base64Url, canonicalContainer, isWithinBase, mintUrn, safeHttpIri, safeMediaType, } from "./safe-iri.js";
 /**
  * Fail CLOSED on any HTTP redirect on a trust-bearing write. Call BEFORE `res.ok`.
+ * Exported so the M2.4 webhook create-only write path (`src/webhook`) enforces the
+ * IDENTICAL redirect-refusal on every pod write (no divergent copy of the guard).
  */
-function assertNoRedirect(res, method, url) {
+export function assertNoRedirect(res, method, url) {
     if (res.type === "opaqueredirect" || (res.status >= 300 && res.status < 400)) {
         const safe = safeHttpIri(url) ?? "<unsafe-url>";
         throw new Error(`refusing to follow a redirect on ${method} ${safe} (status ${res.status}).`);
     }
 }
-/** Fold a channel message id into a safe, collision-free, stable resource slug. */
-function messageSlug(id) {
+/**
+ * Fold a channel message id into a safe, collision-free, stable resource slug. The
+ * base64url fold is total + reversible + injection-free, so a hostile id can never
+ * carry an IRIREF-forbidden char into the resource URL. Exported so the M2.4 webhook
+ * service (`src/webhook`) keys its create-only writes on the IDENTICAL slug — a
+ * message imported by both the batch backfill and the webhook maps to the same URL.
+ */
+export function messageSlug(id) {
     return `alb-${base64Url(id)}`;
 }
-/** Resolve + validate a pod write URL strictly within the container (fail-closed). */
-function assertWritableUrl(url, container) {
+/**
+ * Resolve + validate a pod write URL strictly within the container (fail-closed).
+ * Exported so the webhook create-only writer shares the ONE within-container scope
+ * guard (a write can never escape the configured container).
+ */
+export function assertWritableUrl(url, container) {
     const safe = safeHttpIri(url);
     if (safe === undefined || !isWithinBase(safe, container)) {
         throw new Error("refusing a pod write to a resource outside the configured container base.");
@@ -115,8 +127,11 @@ export async function importInbound(options) {
     }
     return { written, interpretations, skipped };
 }
-/** The stored raw-anchor extension for a (validated) raw media type. */
-function rawExtensionFor(mediaType) {
+/**
+ * The stored raw-anchor extension for a (validated) raw media type. Exported so the
+ * webhook writer names the raw anchor IDENTICALLY to the batch importer.
+ */
+export function rawExtensionFor(mediaType) {
     switch (mediaType) {
         case "message/rfc822":
             return ".eml";

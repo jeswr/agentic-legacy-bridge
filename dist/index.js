@@ -53,8 +53,13 @@ export { base64Url, canonicalContainer, isValidEmailAddress, isWithinBase, mintU
 export { addSenderPerson, personIriFor } from "./sender.js";
 // --- channels: slack (M2.1) ---
 export { SLACK_AGENTIC_METADATA_EVENT_TYPE, SLACK_CHANNEL, SLACK_RAW_MEDIA_TYPE, SlackChannelAdapter, SlackParseError, slackEventToBridgeMessage, } from "./slack.js";
+export { createGuardedUpgradeTransport, createPodRelationshipStore, decodeUpgradeResponse, discoverCard, encodeUpgradeOffer, InMemoryRelationshipStore, offerAndNegotiate, RelationshipConflictError, recordBridgeDetected, recordIdentityVerified, recordTransportFailure, revokeVerification, } from "./upgrade.js";
+// --- M2.4: the channel-upgrade relationship state machine (M2-DESIGN.md §4) ---
+export { assertRelationshipInvariant, initialRelationship, parseRelationship, serializeRelationship, transition, } from "./upgrade-state.js";
 // --- vocabulary ---
 export * as vocab from "./vocab.js";
+// --- M2.4: the inbound-webhook service (also the `./webhook` subexport) ---
+export * as webhook from "./webhook/index.js";
 // --- channels: whatsapp business cloud (M2.2) ---
-export { WHATSAPP_CHANNEL, WHATSAPP_RAW_MEDIA_TYPE, WhatsAppChannelAdapter, WhatsAppParseError, waIdToTelIri, waMessageToBridgeMessage, } from "./whatsapp.js";
+export { WHATSAPP_CHANNEL, WHATSAPP_RAW_MEDIA_TYPE, WhatsAppChannelAdapter, WhatsAppParseError, waIdToTelIri, waMessageToBridgeMessage, whatsappMessageCount, } from "./whatsapp.js";
 //# sourceMappingURL=index.js.map

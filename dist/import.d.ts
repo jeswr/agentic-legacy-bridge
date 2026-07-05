@@ -64,6 +64,26 @@ export interface ImportInboundResult {
     readonly skipped: number;
 }
 /**
+ * Fail CLOSED on any HTTP redirect on a trust-bearing write. Call BEFORE `res.ok`.
+ * Exported so the M2.4 webhook create-only write path (`src/webhook`) enforces the
+ * IDENTICAL redirect-refusal on every pod write (no divergent copy of the guard).
+ */
+export declare function assertNoRedirect(res: Response, method: string, url: string): void;
+/**
+ * Fold a channel message id into a safe, collision-free, stable resource slug. The
+ * base64url fold is total + reversible + injection-free, so a hostile id can never
+ * carry an IRIREF-forbidden char into the resource URL. Exported so the M2.4 webhook
+ * service (`src/webhook`) keys its create-only writes on the IDENTICAL slug — a
+ * message imported by both the batch backfill and the webhook maps to the same URL.
+ */
+export declare function messageSlug(id: string): string;
+/**
+ * Resolve + validate a pod write URL strictly within the container (fail-closed).
+ * Exported so the webhook create-only writer shares the ONE within-container scope
+ * guard (a write can never escape the configured container).
+ */
+export declare function assertWritableUrl(url: string, container: string): string;
+/**
  * Import a channel's inbound messages into a Solid pod (owner-private). Returns a
  * count summary. See the module doc for the write layout + fail-closed posture.
  *
@@ -72,4 +92,9 @@ export interface ImportInboundResult {
  *   pod write fails (redirect / non-2xx).
  */
 export declare function importInbound(options: ImportInboundOptions): Promise<ImportInboundResult>;
+/**
+ * The stored raw-anchor extension for a (validated) raw media type. Exported so the
+ * webhook writer names the raw anchor IDENTICALLY to the batch importer.
+ */
+export declare function rawExtensionFor(mediaType: string): string;
 //# sourceMappingURL=import.d.ts.map

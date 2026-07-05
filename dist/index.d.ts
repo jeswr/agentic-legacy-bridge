@@ -32,7 +32,7 @@ export { type ChannelAdapter, type InboundRawMessage, InMemoryChannelAdapter, pa
 export { EmailParseError, parseEmail } from "./email/index.js";
 export type { EmailAddress, EmailMessage } from "./email/types.js";
 export { ChannelParseError } from "./errors.js";
-export { type AgenticGraphOptions, type AgenticGraphResult, buildAgenticGraph, } from "./graph.js";
+export { type AgenticGraphOptions, type AgenticGraphResult, buildAgenticGraph, type InterpretationStatus, } from "./graph.js";
 export { type ImportInboundOptions, type ImportInboundResult, importInbound, } from "./import.js";
 export { DeterministicInterpreter, deterministicInterpreter, extractIsoDateTimes, extractRelativeMeetings, type InterpretContext, type Interpreter, } from "./interpret.js";
 export { type AsyncInterpreter, actionItemsTask, DEFAULT_TASKS, type ExtractionTask, type LlmExtractor, LlmInterpreter, type LlmInterpreterOptions, type LlmInterpretResult, meetingTimesTask, replyPolarityTask, scriptedExtractor, } from "./interpret-llm.js";
@@ -44,6 +44,9 @@ export { type BuildReplyOptions, type BuiltReply, buildReply, htmlSafeJson, type
 export { base64Url, canonicalContainer, isValidEmailAddress, isWithinBase, mintUrn, normalizeEmailAddress, safeHttpIri, safeMailtoIri, safeMediaType, safeTelIri, sanitizeText, } from "./safe-iri.js";
 export { addSenderPerson, personIriFor, type SenderOptions, type SenderResult } from "./sender.js";
 export { SLACK_AGENTIC_METADATA_EVENT_TYPE, SLACK_CHANNEL, SLACK_RAW_MEDIA_TYPE, SlackChannelAdapter, type SlackChannelAdapterOptions, type SlackParseContext, SlackParseError, slackEventToBridgeMessage, } from "./slack.js";
+export { type CardDiscovery, createGuardedUpgradeTransport, createPodRelationshipStore, decodeUpgradeResponse, discoverCard, encodeUpgradeOffer, type GuardedUpgradeTransportOptions, InMemoryRelationshipStore, type LoadedRelationship, offerAndNegotiate, type PodRelationshipStoreOptions, RelationshipConflictError, type RelationshipStore, recordBridgeDetected, recordIdentityVerified, recordTransportFailure, revokeVerification, type UpgradeTransport, } from "./upgrade.js";
+export { assertRelationshipInvariant, initialRelationship, parseRelationship, type RelationshipEvent, type RelationshipState, type RelationshipStateName, serializeRelationship, type TransitionResult, transition, } from "./upgrade-state.js";
 export * as vocab from "./vocab.js";
-export { WHATSAPP_CHANNEL, WHATSAPP_RAW_MEDIA_TYPE, WhatsAppChannelAdapter, type WhatsAppChannelAdapterOptions, type WhatsAppParseContext, WhatsAppParseError, waIdToTelIri, waMessageToBridgeMessage, } from "./whatsapp.js";
+export * as webhook from "./webhook/index.js";
+export { WHATSAPP_CHANNEL, WHATSAPP_RAW_MEDIA_TYPE, WhatsAppChannelAdapter, type WhatsAppChannelAdapterOptions, type WhatsAppParseContext, WhatsAppParseError, waIdToTelIri, waMessageToBridgeMessage, whatsappMessageCount, } from "./whatsapp.js";
 //# sourceMappingURL=index.d.ts.map

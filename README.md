@@ -163,6 +163,54 @@ The live remote read (`conversations.history` backfill / Socket Mode / the bot-t
 route through `@jeswr/guarded-fetch`, with the bot token only as a request header. Full contract in the
 `src/slack.ts` module doc.
 
+## The inbound webhook service (M2.4)
+
+The `@jeswr/agentic-legacy-bridge/webhook` subexport is the deployable, **stateless, pod-as-state**
+receiver that ties the M2.1/M2.2 transforms together: it **authenticates the source over the raw
+request bytes before any parse**, then writes the message owner-private into a pod **create-only +
+idempotent**. Framework-free core + a WinterCG `fetch` adapter — fully testable with no live network
+or credentials (every seam — the signature secret, the pod write-fetch, the interpreter, the clock —
+is injected). Live channel credentials are a deployment (`needs:user`) concern; nothing is hardcoded.
+
+```ts
+import { createFetchWebhookHandler } from "@jeswr/agentic-legacy-bridge/webhook";
+
+// A Vercel / Node / worker fetch handler for the Slack Events API endpoint:
+export const POST = createFetchWebhookHandler({
+  channel: { channel: "slack", signingSecret: process.env.SLACK_SIGNING_SECRET! },
+  container: "https://alice.example/inbox/",     // owner provisions the Append-only ACL once
+  writeFetch: bridgeAgentAuthedFetch,            // client-credentials/DPoP, acl:Append only
+  markPendingInterpretation: true,               // ack fast; a decoupled sweep runs the LLM pass
+});
+```
+
+- **Signature verification (fail-closed, before any JSON parse).** Slack `v0` HMAC over
+  `v0:<ts>:<raw>` with a 300 s replay window + constant-time compare (`verifySlackSignature`);
+  WhatsApp/Meta `X-Hub-Signature-256` HMAC over the raw body + the `hub.challenge` registration echo
+  gated on a constant-time verify-token match (`verifyMetaSignature` / `metaVerificationChallenge`).
+  An unverifiable request → `401` (Slack) / `403` (Meta registration) with no body detail, nothing
+  written or logged beyond a counter.
+- **Idempotency = the only state.** Every resource is written create-only (`If-None-Match: *`, a
+  `412` = already-imported) keyed on the deterministic stable-message-id slug — a Slack retry, a Meta
+  36-h redelivery, or a replayed still-valid request all map to the same URLs and no-op. No dedupe
+  table, no sticky instance; a partial delivery heals on the platform's retry.
+- **Least privilege.** The bridge writes with an `acl:Append`-only pod identity and never touches an
+  ACL at runtime (the owner provisions the owner+bridge ACL once). A one-Meta-delivery-many-messages
+  body is fanned out per message; the 1 MiB body cap bounds the fan-out.
+- **No SSRF surface at webhook time.** The handler makes NO payload-derived fetch — the only outbound
+  is the pod write (own trusted origin, redirect-refusing).
+
+## The channel-upgrade state machine (M2.4)
+
+`transition()` + the `RelationshipStore` / orchestration (`src/upgrade-state.ts`, `src/upgrade.ts`)
+model, pod-persisted per counterparty, the ratchet from a legacy channel toward an accountable A2A
+path: `legacy-only → bridge-detected → identity-verified → card-discovered → offer-pending →
+upgraded`, with fail-closed transitions. **Discovery is gated on a control-of-both–verified WebID**
+(never fetched on a spoofable handle); a **required (security-bearing) step never silently
+downgrades** (it aborts + surfaces); the **email floor works in every state**. The live probe/offer
+transport is an **injectable seam** defaulting to `@jeswr/guarded-fetch`'s DNS-pinning node fetch
+(https-only, redirect-refusing, verified-endpoint-only) — so it is fully hermetically testable.
+
 ## Security posture
 
 - **The entire input is untrusted.** The RFC 5322 / MIME parser is fail-closed + never hangs: every

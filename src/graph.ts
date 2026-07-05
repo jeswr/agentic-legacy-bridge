@@ -19,6 +19,9 @@ import { asUrn, safeHttpIri, safeMediaType, sanitizeText } from "./safe-iri.js";
 import { addSenderPerson } from "./sender.js";
 import {
   AGENTIC_CHANNEL,
+  AGENTIC_INTERPRETATION_STATUS,
+  AGENTIC_INTERPRETED,
+  AGENTIC_PENDING,
   AGENTIC_RAW_DIGEST,
   AGENTIC_RAW_INBOUND_MESSAGE,
   AGENTIC_RAW_MEDIA_TYPE,
@@ -32,6 +35,20 @@ import {
   SCHEMA_URL,
   XSD,
 } from "./vocab.js";
+
+/**
+ * The interpretation-pipeline status of an imported resource (M2-DESIGN.md §3.6) —
+ * a CLOSED set. The M2.4 webhook path acks fast with `"pending"` (deterministic
+ * interpretations only; the LLM pass is decoupled), and a later sweep re-writes the
+ * graph with `"interpreted"`. Only these two values map to a minted status IRI — an
+ * arbitrary string can never reach `namedNode()` (fail-closed, no injection).
+ */
+export type InterpretationStatus = "pending" | "interpreted";
+
+/** Map a closed {@link InterpretationStatus} to its minted status IRI. */
+function interpretationStatusIri(status: InterpretationStatus): string {
+  return status === "pending" ? AGENTIC_PENDING : AGENTIC_INTERPRETED;
+}
 
 const { namedNode, literal } = DataFactory;
 
@@ -59,6 +76,14 @@ export interface AgenticGraphOptions {
   readonly interpretingAgentWebId?: string;
   /** The ODRL mandate the interpreting agent acts under (`prov:hadPlan`). */
   readonly mandateIri?: string;
+  /**
+   * The interpretation-pipeline status to record on the raw-message anchor
+   * (M2-DESIGN.md §3.6). Omitted → no status quad (M1 behaviour, unchanged). The
+   * M2.4 webhook path sets `"pending"` (ack fast with deterministic interpretations
+   * only; the LLM pass is decoupled). A CLOSED enum, so no arbitrary IRI can be
+   * injected via this field.
+   */
+  readonly interpretationStatus?: InterpretationStatus;
 }
 
 /** The result of building the agentic graph. */
@@ -127,6 +152,13 @@ export async function buildAgenticGraph(options: AgenticGraphOptions): Promise<A
   const rawResource = safeHttpIri(options.rawResourceIri);
   if (rawResource !== undefined) {
     store.addQuad(raw, namedNode(SCHEMA_URL), namedNode(rawResource));
+  }
+  if (options.interpretationStatus !== undefined) {
+    store.addQuad(
+      raw,
+      namedNode(AGENTIC_INTERPRETATION_STATUS),
+      namedNode(interpretationStatusIri(options.interpretationStatus)),
+    );
   }
 
   // --- sender ---

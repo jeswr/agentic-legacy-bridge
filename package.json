@@ -13,6 +13,10 @@
     "./email": {
       "types": "./dist/email/index.d.ts",
       "import": "./dist/email/index.js"
+    },
+    "./webhook": {
+      "types": "./dist/webhook/index.d.ts",
+      "import": "./dist/webhook/index.js"
     }
   },
   "files": [

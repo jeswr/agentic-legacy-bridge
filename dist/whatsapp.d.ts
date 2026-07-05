@@ -159,6 +159,17 @@ export declare function waIdToTelIri(waId: unknown): string | undefined;
  *   `text.body`.
  */
 export declare function waMessageToBridgeMessage(raw: string | Uint8Array, ctx?: WhatsAppParseContext): BridgeMessage;
+/**
+ * Count the importable `messages[]` entries in a raw WhatsApp delivery — the fan-out
+ * arity the M2.4 webhook service needs (one Meta delivery can carry MANY messages,
+ * unlike a Slack Events API delivery). Pure + fail-closed: over the byte cap, or a
+ * non-JSON / non-object body, returns `0` (nothing to import) — it NEVER throws, so
+ * the service can safely ask "how many?" before fanning out with
+ * {@link waMessageToBridgeMessage} per index. The count includes non-text entries
+ * (which the per-index parse then REFUSES); the service skips those, so the count is
+ * the loop bound, not the import count.
+ */
+export declare function whatsappMessageCount(raw: string | Uint8Array): number;
 /** Options for {@link WhatsAppChannelAdapter}. */
 export interface WhatsAppChannelAdapterOptions {
     /**

@@ -28,6 +28,7 @@ export const RDF_TYPE = `${RDF}type`;
 export const XSD_DATE_TIME = `${XSD}dateTime`;
 export const XSD_DECIMAL = `${XSD}decimal`;
 export const XSD_STRING = `${XSD}string`;
+export const XSD_BOOLEAN = `${XSD}boolean`;
 // --- prov (reused for all attribution) ---
 export const PROV_ENTITY = `${PROV}Entity`;
 export const PROV_ACTIVITY = `${PROV}Activity`;
@@ -108,6 +109,40 @@ export const AGENTIC_INTERPRETATION_STATUS = `${AGENTIC}interpretationStatus`;
 export const AGENTIC_PENDING = `${AGENTIC}Pending`;
 /** A deterministically-classified reply polarity: `"affirmative"` / `"negative"` (no standard term exists). */
 export const AGENTIC_REPLY_POLARITY = `${AGENTIC}replyPolarity`;
+// --- channel-upgrade relationship state machine (M2-DESIGN.md §4.1) -----------
+// One owner-private `agentic:Relationship` resource per counterparty person node
+// tracks how far a conversation has moved from the legacy channel toward A2A. No
+// standard term names this state machine, so it is minted here (still under the ONE
+// `agentic:` namespace). The per-state IRIs are a CLOSED set — a state literal read
+// back from the pod is validated against it, never trusted verbatim.
+/** The relationship-resource type. */
+export const AGENTIC_RELATIONSHIP = `${AGENTIC}Relationship`;
+/** The current state of the upgrade relationship (one of the closed state set below). */
+export const AGENTIC_RELATIONSHIP_STATE = `${AGENTIC}relationshipState`;
+/** The counterparty person node this relationship tracks. */
+export const AGENTIC_COUNTERPARTY = `${AGENTIC}counterparty`;
+/** The channel currently in use with the counterparty (`agentic:currentChannel`). */
+export const AGENTIC_CURRENT_CHANNEL = `${AGENTIC}currentChannel`;
+/** The verified agent-card URL discovered for the counterparty (only after IDENTITY-VERIFIED). */
+export const AGENTIC_AGENT_CARD = `${AGENTIC}agentCard`;
+/** The channel currently OFFERED (present only in OFFER-PENDING). */
+export const AGENTIC_OFFERED_CHANNEL = `${AGENTIC}offeredChannel`;
+/** The protocol-doc hash bound into a pending offer (fail-closed binding). */
+export const AGENTIC_OFFER_PROTOCOL_HASH = `${AGENTIC}offerProtocolHash`;
+/** True when the pending offer is security-bearing (a decline ABORTS, never downgrades). */
+export const AGENTIC_OFFER_REQUIRED = `${AGENTIC}offerRequired`;
+/** The last transition time (`xsd:dateTime`). */
+export const AGENTIC_UPDATED_AT = `${AGENTIC}updatedAt`;
+// state individuals (the CLOSED set — M2-DESIGN.md §4.1)
+export const AGENTIC_STATE_LEGACY_ONLY = `${AGENTIC}LegacyOnly`;
+export const AGENTIC_STATE_BRIDGE_DETECTED = `${AGENTIC}BridgeDetected`;
+export const AGENTIC_STATE_IDENTITY_VERIFIED = `${AGENTIC}IdentityVerified`;
+export const AGENTIC_STATE_CARD_DISCOVERED = `${AGENTIC}CardDiscovered`;
+export const AGENTIC_STATE_OFFER_PENDING = `${AGENTIC}OfferPending`;
+export const AGENTIC_STATE_UPGRADED = `${AGENTIC}Upgraded`;
+export const AGENTIC_STATE_ABORTED = `${AGENTIC}Aborted`;
+/** `interpretationStatus` individual: the decoupled LLM pass has completed. */
+export const AGENTIC_INTERPRETED = `${AGENTIC}Interpreted`;
 /** Prefix map for `n3.Writer` (pretty Turtle only — has no effect on correctness). */
 export const PREFIXES = Object.freeze({
     rdf: RDF,

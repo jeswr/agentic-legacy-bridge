@@ -47,6 +47,7 @@ export {
   type AgenticGraphOptions,
   type AgenticGraphResult,
   buildAgenticGraph,
+  type InterpretationStatus,
 } from "./graph.js";
 export {
   type ImportInboundOptions,
@@ -153,8 +154,42 @@ export {
   SlackParseError,
   slackEventToBridgeMessage,
 } from "./slack.js";
+export {
+  type CardDiscovery,
+  createGuardedUpgradeTransport,
+  createPodRelationshipStore,
+  decodeUpgradeResponse,
+  discoverCard,
+  encodeUpgradeOffer,
+  type GuardedUpgradeTransportOptions,
+  InMemoryRelationshipStore,
+  type LoadedRelationship,
+  offerAndNegotiate,
+  type PodRelationshipStoreOptions,
+  RelationshipConflictError,
+  type RelationshipStore,
+  recordBridgeDetected,
+  recordIdentityVerified,
+  recordTransportFailure,
+  revokeVerification,
+  type UpgradeTransport,
+} from "./upgrade.js";
+// --- M2.4: the channel-upgrade relationship state machine (M2-DESIGN.md §4) ---
+export {
+  assertRelationshipInvariant,
+  initialRelationship,
+  parseRelationship,
+  type RelationshipEvent,
+  type RelationshipState,
+  type RelationshipStateName,
+  serializeRelationship,
+  type TransitionResult,
+  transition,
+} from "./upgrade-state.js";
 // --- vocabulary ---
 export * as vocab from "./vocab.js";
+// --- M2.4: the inbound-webhook service (also the `./webhook` subexport) ---
+export * as webhook from "./webhook/index.js";
 // --- channels: whatsapp business cloud (M2.2) ---
 export {
   WHATSAPP_CHANNEL,
@@ -165,4 +200,5 @@ export {
   WhatsAppParseError,
   waIdToTelIri,
   waMessageToBridgeMessage,
+  whatsappMessageCount,
 } from "./whatsapp.js";

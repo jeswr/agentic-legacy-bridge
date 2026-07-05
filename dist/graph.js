@@ -15,7 +15,11 @@ import { asBridgeMessage } from "./message.js";
 import { addInterpretation } from "./reliability.js";
 import { asUrn, safeHttpIri, safeMediaType, sanitizeText } from "./safe-iri.js";
 import { addSenderPerson } from "./sender.js";
-import { AGENTIC_CHANNEL, AGENTIC_RAW_DIGEST, AGENTIC_RAW_INBOUND_MESSAGE, AGENTIC_RAW_MEDIA_TYPE, PREFIXES, PROV_ENTITY, RDF_TYPE, SCHEMA_DATE_RECEIVED, SCHEMA_DATE_SENT, SCHEMA_MESSAGE, SCHEMA_SENDER, SCHEMA_URL, XSD, } from "./vocab.js";
+import { AGENTIC_CHANNEL, AGENTIC_INTERPRETATION_STATUS, AGENTIC_INTERPRETED, AGENTIC_PENDING, AGENTIC_RAW_DIGEST, AGENTIC_RAW_INBOUND_MESSAGE, AGENTIC_RAW_MEDIA_TYPE, PREFIXES, PROV_ENTITY, RDF_TYPE, SCHEMA_DATE_RECEIVED, SCHEMA_DATE_SENT, SCHEMA_MESSAGE, SCHEMA_SENDER, SCHEMA_URL, XSD, } from "./vocab.js";
+/** Map a closed {@link InterpretationStatus} to its minted status IRI. */
+function interpretationStatusIri(status) {
+    return status === "pending" ? AGENTIC_PENDING : AGENTIC_INTERPRETED;
+}
 const { namedNode, literal } = DataFactory;
 /** Build the agentic Turtle graph for one inbound message. */
 export async function buildAgenticGraph(options) {
@@ -52,6 +56,9 @@ export async function buildAgenticGraph(options) {
     const rawResource = safeHttpIri(options.rawResourceIri);
     if (rawResource !== undefined) {
         store.addQuad(raw, namedNode(SCHEMA_URL), namedNode(rawResource));
+    }
+    if (options.interpretationStatus !== undefined) {
+        store.addQuad(raw, namedNode(AGENTIC_INTERPRETATION_STATUS), namedNode(interpretationStatusIri(options.interpretationStatus)));
     }
     // --- sender ---
     const { personIri } = addSenderPerson(store, message, {

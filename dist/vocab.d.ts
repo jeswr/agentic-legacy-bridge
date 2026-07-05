@@ -25,6 +25,7 @@ export declare const RDF_TYPE = "http://www.w3.org/1999/02/22-rdf-syntax-ns#type
 export declare const XSD_DATE_TIME = "http://www.w3.org/2001/XMLSchema#dateTime";
 export declare const XSD_DECIMAL = "http://www.w3.org/2001/XMLSchema#decimal";
 export declare const XSD_STRING = "http://www.w3.org/2001/XMLSchema#string";
+export declare const XSD_BOOLEAN = "http://www.w3.org/2001/XMLSchema#boolean";
 export declare const PROV_ENTITY = "http://www.w3.org/ns/prov#Entity";
 export declare const PROV_ACTIVITY = "http://www.w3.org/ns/prov#Activity";
 export declare const PROV_WAS_DERIVED_FROM = "http://www.w3.org/ns/prov#wasDerivedFrom";
@@ -97,6 +98,33 @@ export declare const AGENTIC_INTERPRETATION_STATUS = "https://w3id.org/jeswr/age
 export declare const AGENTIC_PENDING = "https://w3id.org/jeswr/agentic#Pending";
 /** A deterministically-classified reply polarity: `"affirmative"` / `"negative"` (no standard term exists). */
 export declare const AGENTIC_REPLY_POLARITY = "https://w3id.org/jeswr/agentic#replyPolarity";
+/** The relationship-resource type. */
+export declare const AGENTIC_RELATIONSHIP = "https://w3id.org/jeswr/agentic#Relationship";
+/** The current state of the upgrade relationship (one of the closed state set below). */
+export declare const AGENTIC_RELATIONSHIP_STATE = "https://w3id.org/jeswr/agentic#relationshipState";
+/** The counterparty person node this relationship tracks. */
+export declare const AGENTIC_COUNTERPARTY = "https://w3id.org/jeswr/agentic#counterparty";
+/** The channel currently in use with the counterparty (`agentic:currentChannel`). */
+export declare const AGENTIC_CURRENT_CHANNEL = "https://w3id.org/jeswr/agentic#currentChannel";
+/** The verified agent-card URL discovered for the counterparty (only after IDENTITY-VERIFIED). */
+export declare const AGENTIC_AGENT_CARD = "https://w3id.org/jeswr/agentic#agentCard";
+/** The channel currently OFFERED (present only in OFFER-PENDING). */
+export declare const AGENTIC_OFFERED_CHANNEL = "https://w3id.org/jeswr/agentic#offeredChannel";
+/** The protocol-doc hash bound into a pending offer (fail-closed binding). */
+export declare const AGENTIC_OFFER_PROTOCOL_HASH = "https://w3id.org/jeswr/agentic#offerProtocolHash";
+/** True when the pending offer is security-bearing (a decline ABORTS, never downgrades). */
+export declare const AGENTIC_OFFER_REQUIRED = "https://w3id.org/jeswr/agentic#offerRequired";
+/** The last transition time (`xsd:dateTime`). */
+export declare const AGENTIC_UPDATED_AT = "https://w3id.org/jeswr/agentic#updatedAt";
+export declare const AGENTIC_STATE_LEGACY_ONLY = "https://w3id.org/jeswr/agentic#LegacyOnly";
+export declare const AGENTIC_STATE_BRIDGE_DETECTED = "https://w3id.org/jeswr/agentic#BridgeDetected";
+export declare const AGENTIC_STATE_IDENTITY_VERIFIED = "https://w3id.org/jeswr/agentic#IdentityVerified";
+export declare const AGENTIC_STATE_CARD_DISCOVERED = "https://w3id.org/jeswr/agentic#CardDiscovered";
+export declare const AGENTIC_STATE_OFFER_PENDING = "https://w3id.org/jeswr/agentic#OfferPending";
+export declare const AGENTIC_STATE_UPGRADED = "https://w3id.org/jeswr/agentic#Upgraded";
+export declare const AGENTIC_STATE_ABORTED = "https://w3id.org/jeswr/agentic#Aborted";
+/** `interpretationStatus` individual: the decoupled LLM pass has completed. */
+export declare const AGENTIC_INTERPRETED = "https://w3id.org/jeswr/agentic#Interpreted";
 /** Prefix map for `n3.Writer` (pretty Turtle only — has no effect on correctness). */
 export declare const PREFIXES: Readonly<Record<string, string>>;
 //# sourceMappingURL=vocab.d.ts.map

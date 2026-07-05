@@ -12,6 +12,14 @@
 import type { EmailMessage } from "./email/types.js";
 import { type BridgeMessage } from "./message.js";
 import { type Interpretation } from "./reliability.js";
+/**
+ * The interpretation-pipeline status of an imported resource (M2-DESIGN.md §3.6) —
+ * a CLOSED set. The M2.4 webhook path acks fast with `"pending"` (deterministic
+ * interpretations only; the LLM pass is decoupled), and a later sweep re-writes the
+ * graph with `"interpreted"`. Only these two values map to a minted status IRI — an
+ * arbitrary string can never reach `namedNode()` (fail-closed, no injection).
+ */
+export type InterpretationStatus = "pending" | "interpreted";
 /** Options for {@link buildAgenticGraph}. */
 export interface AgenticGraphOptions {
     /** The parsed inbound message (channel-neutral, or an M1 `EmailMessage` unchanged). */
@@ -36,6 +44,14 @@ export interface AgenticGraphOptions {
     readonly interpretingAgentWebId?: string;
     /** The ODRL mandate the interpreting agent acts under (`prov:hadPlan`). */
     readonly mandateIri?: string;
+    /**
+     * The interpretation-pipeline status to record on the raw-message anchor
+     * (M2-DESIGN.md §3.6). Omitted → no status quad (M1 behaviour, unchanged). The
+     * M2.4 webhook path sets `"pending"` (ack fast with deterministic interpretations
+     * only; the LLM pass is decoupled). A CLOSED enum, so no arbitrary IRI can be
+     * injected via this field.
+     */
+    readonly interpretationStatus?: InterpretationStatus;
 }
 /** The result of building the agentic graph. */
 export interface AgenticGraphResult {

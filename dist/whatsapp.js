@@ -391,6 +391,32 @@ export function waMessageToBridgeMessage(raw, ctx = {}) {
     };
 }
 /**
+ * Count the importable `messages[]` entries in a raw WhatsApp delivery — the fan-out
+ * arity the M2.4 webhook service needs (one Meta delivery can carry MANY messages,
+ * unlike a Slack Events API delivery). Pure + fail-closed: over the byte cap, or a
+ * non-JSON / non-object body, returns `0` (nothing to import) — it NEVER throws, so
+ * the service can safely ask "how many?" before fanning out with
+ * {@link waMessageToBridgeMessage} per index. The count includes non-text entries
+ * (which the per-index parse then REFUSES); the service skips those, so the count is
+ * the loop bound, not the import count.
+ */
+export function whatsappMessageCount(raw) {
+    const buf = typeof raw === "string" ? Buffer.from(raw, "utf8") : Buffer.from(raw);
+    if (buf.length > MAX_EVENT_BYTES)
+        return 0;
+    let parsed;
+    try {
+        parsed = JSON.parse(buf.toString("utf8"));
+    }
+    catch {
+        return 0;
+    }
+    const envelope = asRecord(parsed);
+    if (envelope === undefined)
+        return 0;
+    return resolveMessages(envelope).messages.length;
+}
+/**
  * The WhatsApp {@link ChannelAdapter}: `parse` is {@link waMessageToBridgeMessage}, so
  * a WhatsApp Business webhook plugs into the M2.0 `importInbound` pipeline with zero
  * pipeline changes (owner-private write of the byte-exact `.json` anchor + agentic
