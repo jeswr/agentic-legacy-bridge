@@ -15,10 +15,21 @@ import { asBridgeMessage } from "./message.js";
 import { addInterpretation } from "./reliability.js";
 import { asUrn, safeHttpIri, safeMediaType, sanitizeText } from "./safe-iri.js";
 import { addSenderPerson } from "./sender.js";
-import { AGENTIC_CHANNEL, AGENTIC_INTERPRETATION_STATUS, AGENTIC_INTERPRETED, AGENTIC_PENDING, AGENTIC_RAW_DIGEST, AGENTIC_RAW_INBOUND_MESSAGE, AGENTIC_RAW_MEDIA_TYPE, PREFIXES, PROV_ENTITY, RDF_TYPE, SCHEMA_DATE_RECEIVED, SCHEMA_DATE_SENT, SCHEMA_MESSAGE, SCHEMA_SENDER, SCHEMA_URL, XSD, } from "./vocab.js";
+import { AGENTIC_CHANNEL, AGENTIC_INTERPRETATION_ATTEMPTS, AGENTIC_INTERPRETATION_FAILED, AGENTIC_INTERPRETATION_STATUS, AGENTIC_INTERPRETED, AGENTIC_PENDING, AGENTIC_RAW_DIGEST, AGENTIC_RAW_INBOUND_MESSAGE, AGENTIC_RAW_MEDIA_TYPE, PREFIXES, PROV_ENTITY, RDF_TYPE, SCHEMA_DATE_RECEIVED, SCHEMA_DATE_SENT, SCHEMA_MESSAGE, SCHEMA_SENDER, SCHEMA_URL, XSD, XSD_INTEGER, } from "./vocab.js";
 /** Map a closed {@link InterpretationStatus} to its minted status IRI. */
 function interpretationStatusIri(status) {
-    return status === "pending" ? AGENTIC_PENDING : AGENTIC_INTERPRETED;
+    switch (status) {
+        case "pending":
+            return AGENTIC_PENDING;
+        case "interpreted":
+            return AGENTIC_INTERPRETED;
+        case "failed":
+            return AGENTIC_INTERPRETATION_FAILED;
+        default:
+            // Runtime fail-closed for an out-of-enum value from a JS caller (TS's exhaustiveness
+            // does not protect the untyped boundary) — never `namedNode(undefined)`.
+            throw new TypeError(`buildAgenticGraph: unsupported interpretationStatus ${JSON.stringify(status)}`);
+    }
 }
 const { namedNode, literal } = DataFactory;
 /** Build the agentic Turtle graph for one inbound message. */
@@ -59,6 +70,14 @@ export async function buildAgenticGraph(options) {
     }
     if (options.interpretationStatus !== undefined) {
         store.addQuad(raw, namedNode(AGENTIC_INTERPRETATION_STATUS), namedNode(interpretationStatusIri(options.interpretationStatus)));
+    }
+    // The stateless bounded-retry counter (M2.5a §1.1). Written only for a non-negative
+    // integer — a NaN/negative/fractional value is ignored so a malformed counter can
+    // never reach a typed literal. Serialised as a canonical `xsd:integer` string.
+    if (options.interpretationAttempts !== undefined &&
+        Number.isInteger(options.interpretationAttempts) &&
+        options.interpretationAttempts >= 0) {
+        store.addQuad(raw, namedNode(AGENTIC_INTERPRETATION_ATTEMPTS), literal(String(options.interpretationAttempts), namedNode(XSD_INTEGER)));
     }
     // --- sender ---
     const { personIri } = addSenderPerson(store, message, {

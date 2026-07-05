@@ -15,11 +15,13 @@ import { type Interpretation } from "./reliability.js";
 /**
  * The interpretation-pipeline status of an imported resource (M2-DESIGN.md §3.6) —
  * a CLOSED set. The M2.4 webhook path acks fast with `"pending"` (deterministic
- * interpretations only; the LLM pass is decoupled), and a later sweep re-writes the
- * graph with `"interpreted"`. Only these two values map to a minted status IRI — an
- * arbitrary string can never reach `namedNode()` (fail-closed, no injection).
+ * interpretations only; the LLM pass is decoupled), and a later decoupled sweep
+ * (M2.5a) re-writes the graph with `"interpreted"` — or, after the bounded-retry cap
+ * is hit without completing, the terminal `"failed"`. Only these values map to a
+ * minted status IRI — an arbitrary string can never reach `namedNode()` (fail-closed,
+ * no injection).
  */
-export type InterpretationStatus = "pending" | "interpreted";
+export type InterpretationStatus = "pending" | "interpreted" | "failed";
 /** Options for {@link buildAgenticGraph}. */
 export interface AgenticGraphOptions {
     /** The parsed inbound message (channel-neutral, or an M1 `EmailMessage` unchanged). */
@@ -52,6 +54,15 @@ export interface AgenticGraphOptions {
      * injected via this field.
      */
     readonly interpretationStatus?: InterpretationStatus;
+    /**
+     * The decoupled-sweep attempt counter (`agentic:interpretationAttempts`, M2.5a
+     * §1.1) — how many sweep attempts have run against this resource. Written only when
+     * a non-negative integer is supplied (the stateless bounded-retry counter the sweep
+     * increments on each failed attempt); omitted ⇒ no quad ⇒ 0 attempts (back-compat:
+     * the webhook + batch paths never set it). A non-integer / negative value is
+     * ignored (fail-safe — never a malformed literal).
+     */
+    readonly interpretationAttempts?: number;
 }
 /** The result of building the agentic graph. */
 export interface AgenticGraphResult {

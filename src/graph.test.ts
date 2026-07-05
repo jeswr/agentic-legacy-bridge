@@ -87,3 +87,79 @@ describe("buildAgenticGraph", () => {
     expect(() => new Parser().parse(turtle)).not.toThrow();
   });
 });
+
+describe("buildAgenticGraph — M2.5a status widening + attempts counter", () => {
+  const Agentic = "https://w3id.org/jeswr/agentic#";
+  const rawIri = () => mintUrn("raw", parse("hi").rawSha256);
+
+  async function statusObject(
+    status: "pending" | "interpreted" | "failed",
+  ): Promise<string | undefined> {
+    const message = parse("hi");
+    const { turtle } = await buildAgenticGraph({
+      message,
+      channel: "email",
+      docIri: DOC,
+      rawMessageIri: rawIri(),
+      rawResourceIri: RAW_RES,
+      interpretationStatus: status,
+    });
+    return new Parser()
+      .parse(turtle)
+      .find((q) => q.predicate.value === `${Agentic}interpretationStatus`)?.object.value;
+  }
+
+  it("maps the terminal `failed` status to agentic:InterpretationFailed", async () => {
+    expect(await statusObject("failed")).toBe(`${Agentic}InterpretationFailed`);
+    expect(await statusObject("pending")).toBe(`${Agentic}Pending`);
+    expect(await statusObject("interpreted")).toBe(`${Agentic}Interpreted`);
+  });
+
+  it("throws (fail-closed) on an out-of-enum interpretationStatus from a JS caller", async () => {
+    // A JS caller bypassing the TS type must NOT reach `namedNode(undefined)`.
+    await expect(
+      buildAgenticGraph({
+        message: parse("hi"),
+        channel: "email",
+        docIri: DOC,
+        rawMessageIri: rawIri(),
+        // biome-ignore lint/suspicious/noExplicitAny: exercising the untyped JS boundary.
+        interpretationStatus: "bogus" as any,
+      }),
+    ).rejects.toThrow(TypeError);
+  });
+
+  it("writes interpretationAttempts as a canonical xsd:integer when supplied", async () => {
+    const message = parse("hi");
+    const { turtle } = await buildAgenticGraph({
+      message,
+      channel: "email",
+      docIri: DOC,
+      rawMessageIri: rawIri(),
+      interpretationStatus: "pending",
+      interpretationAttempts: 3,
+    });
+    const q = new Parser()
+      .parse(turtle)
+      .find((q) => q.predicate.value === `${Agentic}interpretationAttempts`);
+    expect(q?.object.value).toBe("3");
+    expect(q?.object.termType).toBe("Literal");
+    // biome-ignore lint/suspicious/noExplicitAny: reading the literal datatype in a test.
+    expect((q?.object as any).datatype?.value).toBe("http://www.w3.org/2001/XMLSchema#integer");
+  });
+
+  it("omits the attempts quad by default and for a malformed counter (back-compat: absent ⇒ 0)", async () => {
+    const message = parse("hi");
+    for (const attempts of [undefined, -1, 1.5, Number.NaN]) {
+      const { turtle } = await buildAgenticGraph({
+        message,
+        channel: "email",
+        docIri: DOC,
+        rawMessageIri: rawIri(),
+        interpretationStatus: "pending",
+        ...(attempts !== undefined ? { interpretationAttempts: attempts } : {}),
+      });
+      expect(turtle).not.toContain("interpretationAttempts");
+    }
+  });
+});

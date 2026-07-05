@@ -27,7 +27,7 @@
  *
  * @packageDocumentation
  */
-export { buildOwnerOnlyAclTurtle } from "./acl.js";
+export { buildBridgeAclTurtle, buildOwnerOnlyAclTurtle, } from "./acl.js";
 // --- canonical message (solid-chat-interop) ---
 export { emailToCanonical, serializeCanonical, toCanonicalMessage } from "./canonical.js";
 // --- channels + orchestration ---
@@ -36,12 +36,14 @@ export { InMemoryChannelAdapter, parseEmailInbound, } from "./channel.js";
 export { EmailParseError, parseEmail } from "./email/index.js";
 export { ChannelParseError } from "./errors.js";
 export { buildAgenticGraph, } from "./graph.js";
-export { importInbound, } from "./import.js";
+export { importInbound, messageSlug, slugToMessageId, } from "./import.js";
 // --- rung 2: interpret with reliability ---
 export { DeterministicInterpreter, deterministicInterpreter, extractIsoDateTimes, extractRelativeMeetings, } from "./interpret.js";
 // --- rung 2: the live-LLM interpreter (M2.3) ---
 export { actionItemsTask, DEFAULT_TASKS, LlmInterpreter, meetingTimesTask, replyPolarityTask, scriptedExtractor, } from "./interpret-llm.js";
 export { createHttpLlmExtractor, } from "./interpret-llm-http.js";
+// --- M2.5a: the decoupled LLM-interpretation sweep ---
+export { DEFAULT_MAX_ATTEMPTS, DEFAULT_MAX_GRAPH_BYTES, DEFAULT_MAX_RAW_ANCHOR_BYTES, DEFAULT_MAX_RESOURCES_PER_SWEEP, reparseRawAnchor, sweepPendingInterpretations, } from "./interpret-sweep.js";
 // --- the channel-neutral message shape (M2.0) ---
 export { asBridgeMessage, isBridgeMessage, toBridgeMessage, } from "./message.js";
 // --- rung 4: negotiation ---
@@ -49,7 +51,7 @@ export { asChannel, CHANNEL_EXTENSION_URI, CHANNEL_PREFERENCE, CHANNELS_HEADER, 
 export { addInterpretation, clampConfidence, classifyReliability, DEFAULT_THRESHOLDS, } from "./reliability.js";
 // --- rung 3: structured reply ---
 export { buildReply, htmlSafeJson, } from "./reply.js";
-export { base64Url, canonicalContainer, isValidEmailAddress, isWithinBase, mintUrn, normalizeEmailAddress, safeHttpIri, safeMailtoIri, safeMediaType, safeTelIri, sanitizeText, } from "./safe-iri.js";
+export { base64Url, base64UrlDecode, canonicalContainer, isValidEmailAddress, isWithinBase, mintUrn, normalizeEmailAddress, safeHttpIri, safeMailtoIri, safeMediaType, safeTelIri, sanitizeText, } from "./safe-iri.js";
 export { addSenderPerson, personIriFor } from "./sender.js";
 // --- channels: slack (M2.1) ---
 export { SLACK_AGENTIC_METADATA_EVENT_TYPE, SLACK_CHANNEL, SLACK_RAW_MEDIA_TYPE, SlackChannelAdapter, SlackParseError, slackEventToBridgeMessage, } from "./slack.js";

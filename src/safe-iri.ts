@@ -167,6 +167,38 @@ export function base64Url(input: string): string {
 }
 
 /**
+ * The FAIL-CLOSED inverse of {@link base64Url}: decode an unpadded base64url segment
+ * back to its original UTF-8 string, or `undefined` if the segment is not the CANONICAL
+ * encoding of any string. Node's base64 decoder is lenient (it accepts padding,
+ * non-canonical trailing bits, and `+`/`/` aliases), so a bare decode is NOT injective —
+ * a tampered/aliased segment could decode to a value whose re-encoding differs. This
+ * helper therefore RE-ENCODES the decode and rejects any input that is not byte-identical
+ * to `base64Url(decoded)`. That makes {@link base64UrlDecode}(x) defined ⟺
+ * `base64Url(base64UrlDecode(x)) === x`, so the round-trip is exact and a hostile
+ * resource-slug segment cannot be mis-decoded into a DIFFERENT identifier (M2.5a §1.3 —
+ * the reversible-slug integrity guard the decoupled sweep relies on to avoid
+ * mis-attribution).
+ */
+export function base64UrlDecode(segment: unknown): string | undefined {
+  if (typeof segment !== "string" || segment.length === 0) return undefined;
+  // Only the unpadded base64url alphabet — reject padding, whitespace, `+`/`/`, and any
+  // other character BEFORE decoding (Node would otherwise silently ignore them).
+  if (!/^[A-Za-z0-9_-]+$/.test(segment)) return undefined;
+  let decoded: string;
+  try {
+    decoded = Buffer.from(segment, "base64url").toString("utf8");
+  } catch {
+    return undefined;
+  }
+  // Canonicality gate: the ONLY accepted segment is the exact re-encoding of the decode.
+  // This rejects non-canonical trailing bits (e.g. a segment that decodes to bytes whose
+  // re-encoding drops a character) and any lossy UTF-8 round-trip (a lone surrogate /
+  // invalid byte sequence becomes U+FFFD and fails to re-encode identically).
+  if (base64Url(decoded) !== segment) return undefined;
+  return decoded;
+}
+
+/**
  * Injection-safe passthrough for the INTERNAL anchor IRIs this package mints — an
  * absolute `urn:agentic:*` (and similar `urn:<nid>:<nss>`) carrying no
  * IRIREF-forbidden char. Unlike {@link mintUrn} it does not re-encode; it VALIDATES

@@ -19,6 +19,8 @@ export declare const FOAF = "http://xmlns.com/foaf/0.1/";
 export declare const VCARD = "http://www.w3.org/2006/vcard/ns#";
 export declare const DCT = "http://purl.org/dc/terms/";
 export declare const ACL = "http://www.w3.org/ns/auth/acl#";
+/** Linked Data Platform — the container `ldp:contains` listing the sweep walks (M2.5a). */
+export declare const LDP = "http://www.w3.org/ns/ldp#";
 /** The ONE minted namespace (reliability + raw-message anchor). w3id redirect = needs:user. */
 export declare const AGENTIC = "https://w3id.org/jeswr/agentic#";
 export declare const RDF_TYPE = "http://www.w3.org/1999/02/22-rdf-syntax-ns#type";
@@ -26,6 +28,8 @@ export declare const XSD_DATE_TIME = "http://www.w3.org/2001/XMLSchema#dateTime"
 export declare const XSD_DECIMAL = "http://www.w3.org/2001/XMLSchema#decimal";
 export declare const XSD_STRING = "http://www.w3.org/2001/XMLSchema#string";
 export declare const XSD_BOOLEAN = "http://www.w3.org/2001/XMLSchema#boolean";
+export declare const XSD_INTEGER = "http://www.w3.org/2001/XMLSchema#integer";
+export declare const LDP_CONTAINS = "http://www.w3.org/ns/ldp#contains";
 export declare const PROV_ENTITY = "http://www.w3.org/ns/prov#Entity";
 export declare const PROV_ACTIVITY = "http://www.w3.org/ns/prov#Activity";
 export declare const PROV_WAS_DERIVED_FROM = "http://www.w3.org/ns/prov#wasDerivedFrom";
@@ -96,6 +100,19 @@ export declare const AGENTIC_MODEL = "https://w3id.org/jeswr/agentic#model";
 export declare const AGENTIC_INTERPRETATION_STATUS = "https://w3id.org/jeswr/agentic#interpretationStatus";
 /** `interpretationStatus` individual: the decoupled LLM pass has not yet run. */
 export declare const AGENTIC_PENDING = "https://w3id.org/jeswr/agentic#Pending";
+/**
+ * How many decoupled-sweep attempts have run against a `Pending` resource
+ * (`xsd:integer`, M2.5a §1.1). Incremented per FAILED attempt via the CAS rewrite so
+ * a stateless, pod-as-state bounded retry does not loop forever. Absent ⇒ 0.
+ */
+export declare const AGENTIC_INTERPRETATION_ATTEMPTS = "https://w3id.org/jeswr/agentic#interpretationAttempts";
+/**
+ * `interpretationStatus` individual: the decoupled LLM pass reached its attempt cap
+ * without completing (M2.5a §1.1). Terminal + HONEST — the resource is NOT mislabelled
+ * `Interpreted`; the deterministic interpretations + raw anchor stay intact and the
+ * failure is visible to the owner's quarantine UI. Never re-swept until a human resets it.
+ */
+export declare const AGENTIC_INTERPRETATION_FAILED = "https://w3id.org/jeswr/agentic#InterpretationFailed";
 /** A deterministically-classified reply polarity: `"affirmative"` / `"negative"` (no standard term exists). */
 export declare const AGENTIC_REPLY_POLARITY = "https://w3id.org/jeswr/agentic#replyPolarity";
 /** The relationship-resource type. */

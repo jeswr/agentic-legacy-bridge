@@ -33,6 +33,7 @@ import { deterministicInterpreter, type Interpreter } from "./interpret.js";
 import type { BridgeMessage } from "./message.js";
 import {
   base64Url,
+  base64UrlDecode,
   canonicalContainer,
   isWithinBase,
   mintUrn,
@@ -101,6 +102,30 @@ export function assertNoRedirect(res: Response, method: string, url: string): vo
  */
 export function messageSlug(id: string): string {
   return `alb-${base64Url(id)}`;
+}
+
+/** The fixed `messageSlug` prefix (the `alb-` marker that scopes the base64url fold). */
+const SLUG_PREFIX = "alb-";
+
+/**
+ * The FAIL-CLOSED inverse of {@link messageSlug}: recover the original channel message
+ * id from a resource slug, or `undefined` if the slug is not the CANONICAL encoding of
+ * any id. Used by the decoupled M2.5a sweep to key a Pending resource's raw-anchor
+ * re-parse back onto its channel message (§1.3). Because {@link base64UrlDecode} is
+ * exact (it rejects any non-canonical segment), this satisfies the round-trip identity
+ * `slugToMessageId(messageSlug(id)) === id` for every id, AND
+ * `messageSlug(slugToMessageId(slug)) === slug` for every slug it accepts — so a
+ * tampered / un-reversible slug decodes to `undefined` and the sweep skips it rather
+ * than mis-attributing a re-parse to the wrong message.
+ */
+export function slugToMessageId(slug: unknown): string | undefined {
+  if (typeof slug !== "string" || !slug.startsWith(SLUG_PREFIX)) return undefined;
+  const decoded = base64UrlDecode(slug.slice(SLUG_PREFIX.length));
+  if (decoded === undefined) return undefined;
+  // Defence in depth: re-derive the slug from the decode and require exact equality, so
+  // `slugToMessageId` can NEVER return an id whose own `messageSlug` differs from the
+  // input (the property the sweep's mis-attribution guard leans on).
+  return messageSlug(decoded) === slug ? decoded : undefined;
 }
 
 /**

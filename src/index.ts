@@ -28,7 +28,12 @@
  * @packageDocumentation
  */
 
-export { buildOwnerOnlyAclTurtle } from "./acl.js";
+export {
+  type BridgeAclDocuments,
+  type BridgeAclOptions,
+  buildBridgeAclTurtle,
+  buildOwnerOnlyAclTurtle,
+} from "./acl.js";
 // --- canonical message (solid-chat-interop) ---
 export { emailToCanonical, serializeCanonical, toCanonicalMessage } from "./canonical.js";
 // --- channels + orchestration ---
@@ -53,6 +58,8 @@ export {
   type ImportInboundOptions,
   type ImportInboundResult,
   importInbound,
+  messageSlug,
+  slugToMessageId,
 } from "./import.js";
 // --- rung 2: interpret with reliability ---
 export {
@@ -81,6 +88,20 @@ export {
   createHttpLlmExtractor,
   type HttpLlmExtractorOptions,
 } from "./interpret-llm-http.js";
+// --- M2.5a: the decoupled LLM-interpretation sweep ---
+export {
+  DEFAULT_MAX_ATTEMPTS,
+  DEFAULT_MAX_GRAPH_BYTES,
+  DEFAULT_MAX_RAW_ANCHOR_BYTES,
+  DEFAULT_MAX_RESOURCES_PER_SWEEP,
+  type ReparseRawAnchorOptions,
+  reparseRawAnchor,
+  type SweepAuditEvent,
+  type SweepPendingInterpretationsOptions,
+  type SweepResult,
+  type SweepSkipReason,
+  sweepPendingInterpretations,
+} from "./interpret-sweep.js";
 // --- the channel-neutral message shape (M2.0) ---
 export {
   asBridgeMessage,
@@ -131,6 +152,7 @@ export {
 } from "./reply.js";
 export {
   base64Url,
+  base64UrlDecode,
   canonicalContainer,
   isValidEmailAddress,
   isWithinBase,

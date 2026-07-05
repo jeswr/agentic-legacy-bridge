@@ -28,7 +28,7 @@ import { serializeCanonical } from "./canonical.js";
 import { ChannelParseError } from "./errors.js";
 import { buildAgenticGraph } from "./graph.js";
 import { deterministicInterpreter } from "./interpret.js";
-import { base64Url, canonicalContainer, isWithinBase, mintUrn, safeHttpIri, safeMediaType, } from "./safe-iri.js";
+import { base64Url, base64UrlDecode, canonicalContainer, isWithinBase, mintUrn, safeHttpIri, safeMediaType, } from "./safe-iri.js";
 /**
  * Fail CLOSED on any HTTP redirect on a trust-bearing write. Call BEFORE `res.ok`.
  * Exported so the M2.4 webhook create-only write path (`src/webhook`) enforces the
@@ -49,6 +49,30 @@ export function assertNoRedirect(res, method, url) {
  */
 export function messageSlug(id) {
     return `alb-${base64Url(id)}`;
+}
+/** The fixed `messageSlug` prefix (the `alb-` marker that scopes the base64url fold). */
+const SLUG_PREFIX = "alb-";
+/**
+ * The FAIL-CLOSED inverse of {@link messageSlug}: recover the original channel message
+ * id from a resource slug, or `undefined` if the slug is not the CANONICAL encoding of
+ * any id. Used by the decoupled M2.5a sweep to key a Pending resource's raw-anchor
+ * re-parse back onto its channel message (§1.3). Because {@link base64UrlDecode} is
+ * exact (it rejects any non-canonical segment), this satisfies the round-trip identity
+ * `slugToMessageId(messageSlug(id)) === id` for every id, AND
+ * `messageSlug(slugToMessageId(slug)) === slug` for every slug it accepts — so a
+ * tampered / un-reversible slug decodes to `undefined` and the sweep skips it rather
+ * than mis-attributing a re-parse to the wrong message.
+ */
+export function slugToMessageId(slug) {
+    if (typeof slug !== "string" || !slug.startsWith(SLUG_PREFIX))
+        return undefined;
+    const decoded = base64UrlDecode(slug.slice(SLUG_PREFIX.length));
+    if (decoded === undefined)
+        return undefined;
+    // Defence in depth: re-derive the slug from the decode and require exact equality, so
+    // `slugToMessageId` can NEVER return an id whose own `messageSlug` differs from the
+    // input (the property the sweep's mis-attribution guard leans on).
+    return messageSlug(decoded) === slug ? decoded : undefined;
 }
 /**
  * Resolve + validate a pod write URL strictly within the container (fail-closed).

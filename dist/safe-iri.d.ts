@@ -70,6 +70,20 @@ export declare function safeMailtoIri(address: unknown): string | undefined;
  */
 export declare function base64Url(input: string): string;
 /**
+ * The FAIL-CLOSED inverse of {@link base64Url}: decode an unpadded base64url segment
+ * back to its original UTF-8 string, or `undefined` if the segment is not the CANONICAL
+ * encoding of any string. Node's base64 decoder is lenient (it accepts padding,
+ * non-canonical trailing bits, and `+`/`/` aliases), so a bare decode is NOT injective —
+ * a tampered/aliased segment could decode to a value whose re-encoding differs. This
+ * helper therefore RE-ENCODES the decode and rejects any input that is not byte-identical
+ * to `base64Url(decoded)`. That makes {@link base64UrlDecode}(x) defined ⟺
+ * `base64Url(base64UrlDecode(x)) === x`, so the round-trip is exact and a hostile
+ * resource-slug segment cannot be mis-decoded into a DIFFERENT identifier (M2.5a §1.3 —
+ * the reversible-slug integrity guard the decoupled sweep relies on to avoid
+ * mis-attribution).
+ */
+export declare function base64UrlDecode(segment: unknown): string | undefined;
+/**
  * Injection-safe passthrough for the INTERNAL anchor IRIs this package mints — an
  * absolute `urn:agentic:*` (and similar `urn:<nid>:<nss>`) carrying no
  * IRIREF-forbidden char. Unlike {@link mintUrn} it does not re-encode; it VALIDATES

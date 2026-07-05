@@ -78,6 +78,18 @@ export declare function assertNoRedirect(res: Response, method: string, url: str
  */
 export declare function messageSlug(id: string): string;
 /**
+ * The FAIL-CLOSED inverse of {@link messageSlug}: recover the original channel message
+ * id from a resource slug, or `undefined` if the slug is not the CANONICAL encoding of
+ * any id. Used by the decoupled M2.5a sweep to key a Pending resource's raw-anchor
+ * re-parse back onto its channel message (§1.3). Because {@link base64UrlDecode} is
+ * exact (it rejects any non-canonical segment), this satisfies the round-trip identity
+ * `slugToMessageId(messageSlug(id)) === id` for every id, AND
+ * `messageSlug(slugToMessageId(slug)) === slug` for every slug it accepts — so a
+ * tampered / un-reversible slug decodes to `undefined` and the sweep skips it rather
+ * than mis-attributing a re-parse to the wrong message.
+ */
+export declare function slugToMessageId(slug: unknown): string | undefined;
+/**
  * Resolve + validate a pod write URL strictly within the container (fail-closed).
  * Exported so the webhook create-only writer shares the ONE within-container scope
  * guard (a write can never escape the configured container).

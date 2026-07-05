@@ -19,6 +19,8 @@ import { asUrn, safeHttpIri, safeMediaType, sanitizeText } from "./safe-iri.js";
 import { addSenderPerson } from "./sender.js";
 import {
   AGENTIC_CHANNEL,
+  AGENTIC_INTERPRETATION_ATTEMPTS,
+  AGENTIC_INTERPRETATION_FAILED,
   AGENTIC_INTERPRETATION_STATUS,
   AGENTIC_INTERPRETED,
   AGENTIC_PENDING,
@@ -34,20 +36,36 @@ import {
   SCHEMA_SENDER,
   SCHEMA_URL,
   XSD,
+  XSD_INTEGER,
 } from "./vocab.js";
 
 /**
  * The interpretation-pipeline status of an imported resource (M2-DESIGN.md §3.6) —
  * a CLOSED set. The M2.4 webhook path acks fast with `"pending"` (deterministic
- * interpretations only; the LLM pass is decoupled), and a later sweep re-writes the
- * graph with `"interpreted"`. Only these two values map to a minted status IRI — an
- * arbitrary string can never reach `namedNode()` (fail-closed, no injection).
+ * interpretations only; the LLM pass is decoupled), and a later decoupled sweep
+ * (M2.5a) re-writes the graph with `"interpreted"` — or, after the bounded-retry cap
+ * is hit without completing, the terminal `"failed"`. Only these values map to a
+ * minted status IRI — an arbitrary string can never reach `namedNode()` (fail-closed,
+ * no injection).
  */
-export type InterpretationStatus = "pending" | "interpreted";
+export type InterpretationStatus = "pending" | "interpreted" | "failed";
 
 /** Map a closed {@link InterpretationStatus} to its minted status IRI. */
 function interpretationStatusIri(status: InterpretationStatus): string {
-  return status === "pending" ? AGENTIC_PENDING : AGENTIC_INTERPRETED;
+  switch (status) {
+    case "pending":
+      return AGENTIC_PENDING;
+    case "interpreted":
+      return AGENTIC_INTERPRETED;
+    case "failed":
+      return AGENTIC_INTERPRETATION_FAILED;
+    default:
+      // Runtime fail-closed for an out-of-enum value from a JS caller (TS's exhaustiveness
+      // does not protect the untyped boundary) — never `namedNode(undefined)`.
+      throw new TypeError(
+        `buildAgenticGraph: unsupported interpretationStatus ${JSON.stringify(status)}`,
+      );
+  }
 }
 
 const { namedNode, literal } = DataFactory;
@@ -84,6 +102,15 @@ export interface AgenticGraphOptions {
    * injected via this field.
    */
   readonly interpretationStatus?: InterpretationStatus;
+  /**
+   * The decoupled-sweep attempt counter (`agentic:interpretationAttempts`, M2.5a
+   * §1.1) — how many sweep attempts have run against this resource. Written only when
+   * a non-negative integer is supplied (the stateless bounded-retry counter the sweep
+   * increments on each failed attempt); omitted ⇒ no quad ⇒ 0 attempts (back-compat:
+   * the webhook + batch paths never set it). A non-integer / negative value is
+   * ignored (fail-safe — never a malformed literal).
+   */
+  readonly interpretationAttempts?: number;
 }
 
 /** The result of building the agentic graph. */
@@ -158,6 +185,20 @@ export async function buildAgenticGraph(options: AgenticGraphOptions): Promise<A
       raw,
       namedNode(AGENTIC_INTERPRETATION_STATUS),
       namedNode(interpretationStatusIri(options.interpretationStatus)),
+    );
+  }
+  // The stateless bounded-retry counter (M2.5a §1.1). Written only for a non-negative
+  // integer — a NaN/negative/fractional value is ignored so a malformed counter can
+  // never reach a typed literal. Serialised as a canonical `xsd:integer` string.
+  if (
+    options.interpretationAttempts !== undefined &&
+    Number.isInteger(options.interpretationAttempts) &&
+    options.interpretationAttempts >= 0
+  ) {
+    store.addQuad(
+      raw,
+      namedNode(AGENTIC_INTERPRETATION_ATTEMPTS),
+      literal(String(options.interpretationAttempts), namedNode(XSD_INTEGER)),
     );
   }
 

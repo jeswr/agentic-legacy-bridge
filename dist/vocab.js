@@ -21,6 +21,8 @@ export const FOAF = "http://xmlns.com/foaf/0.1/";
 export const VCARD = "http://www.w3.org/2006/vcard/ns#";
 export const DCT = "http://purl.org/dc/terms/";
 export const ACL = "http://www.w3.org/ns/auth/acl#";
+/** Linked Data Platform — the container `ldp:contains` listing the sweep walks (M2.5a). */
+export const LDP = "http://www.w3.org/ns/ldp#";
 /** The ONE minted namespace (reliability + raw-message anchor). w3id redirect = needs:user. */
 export const AGENTIC = "https://w3id.org/jeswr/agentic#";
 // --- rdf / xsd ---
@@ -29,6 +31,9 @@ export const XSD_DATE_TIME = `${XSD}dateTime`;
 export const XSD_DECIMAL = `${XSD}decimal`;
 export const XSD_STRING = `${XSD}string`;
 export const XSD_BOOLEAN = `${XSD}boolean`;
+export const XSD_INTEGER = `${XSD}integer`;
+// --- ldp (the container listing surface the M2.5a sweep walks) ---
+export const LDP_CONTAINS = `${LDP}contains`;
 // --- prov (reused for all attribution) ---
 export const PROV_ENTITY = `${PROV}Entity`;
 export const PROV_ACTIVITY = `${PROV}Activity`;
@@ -107,6 +112,19 @@ export const AGENTIC_MODEL = `${AGENTIC}model`;
 export const AGENTIC_INTERPRETATION_STATUS = `${AGENTIC}interpretationStatus`;
 /** `interpretationStatus` individual: the decoupled LLM pass has not yet run. */
 export const AGENTIC_PENDING = `${AGENTIC}Pending`;
+/**
+ * How many decoupled-sweep attempts have run against a `Pending` resource
+ * (`xsd:integer`, M2.5a §1.1). Incremented per FAILED attempt via the CAS rewrite so
+ * a stateless, pod-as-state bounded retry does not loop forever. Absent ⇒ 0.
+ */
+export const AGENTIC_INTERPRETATION_ATTEMPTS = `${AGENTIC}interpretationAttempts`;
+/**
+ * `interpretationStatus` individual: the decoupled LLM pass reached its attempt cap
+ * without completing (M2.5a §1.1). Terminal + HONEST — the resource is NOT mislabelled
+ * `Interpreted`; the deterministic interpretations + raw anchor stay intact and the
+ * failure is visible to the owner's quarantine UI. Never re-swept until a human resets it.
+ */
+export const AGENTIC_INTERPRETATION_FAILED = `${AGENTIC}InterpretationFailed`;
 /** A deterministically-classified reply polarity: `"affirmative"` / `"negative"` (no standard term exists). */
 export const AGENTIC_REPLY_POLARITY = `${AGENTIC}replyPolarity`;
 // --- channel-upgrade relationship state machine (M2-DESIGN.md §4.1) -----------
@@ -153,6 +171,7 @@ export const PREFIXES = Object.freeze({
     vcard: VCARD,
     dct: DCT,
     acl: ACL,
+    ldp: LDP,
     agentic: AGENTIC,
 });
 //# sourceMappingURL=vocab.js.map

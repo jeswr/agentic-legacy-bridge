@@ -26,22 +26,23 @@
  *
  * @packageDocumentation
  */
-export { buildOwnerOnlyAclTurtle } from "./acl.js";
+export { type BridgeAclDocuments, type BridgeAclOptions, buildBridgeAclTurtle, buildOwnerOnlyAclTurtle, } from "./acl.js";
 export { emailToCanonical, serializeCanonical, toCanonicalMessage } from "./canonical.js";
 export { type ChannelAdapter, type InboundRawMessage, InMemoryChannelAdapter, parseEmailInbound, type ReplyTarget, } from "./channel.js";
 export { EmailParseError, parseEmail } from "./email/index.js";
 export type { EmailAddress, EmailMessage } from "./email/types.js";
 export { ChannelParseError } from "./errors.js";
 export { type AgenticGraphOptions, type AgenticGraphResult, buildAgenticGraph, type InterpretationStatus, } from "./graph.js";
-export { type ImportInboundOptions, type ImportInboundResult, importInbound, } from "./import.js";
+export { type ImportInboundOptions, type ImportInboundResult, importInbound, messageSlug, slugToMessageId, } from "./import.js";
 export { DeterministicInterpreter, deterministicInterpreter, extractIsoDateTimes, extractRelativeMeetings, type InterpretContext, type Interpreter, } from "./interpret.js";
 export { type AsyncInterpreter, actionItemsTask, DEFAULT_TASKS, type ExtractionTask, type LlmExtractor, LlmInterpreter, type LlmInterpreterOptions, type LlmInterpretResult, meetingTimesTask, replyPolarityTask, scriptedExtractor, } from "./interpret-llm.js";
 export { createHttpLlmExtractor, type HttpLlmExtractorOptions, } from "./interpret-llm-http.js";
+export { DEFAULT_MAX_ATTEMPTS, DEFAULT_MAX_GRAPH_BYTES, DEFAULT_MAX_RAW_ANCHOR_BYTES, DEFAULT_MAX_RESOURCES_PER_SWEEP, type ReparseRawAnchorOptions, reparseRawAnchor, type SweepAuditEvent, type SweepPendingInterpretationsOptions, type SweepResult, type SweepSkipReason, sweepPendingInterpretations, } from "./interpret-sweep.js";
 export { asBridgeMessage, type BridgeMessage, type BridgeSender, isBridgeMessage, toBridgeMessage, } from "./message.js";
 export { asChannel, type BridgeCapability, CHANNEL_EXTENSION_URI, CHANNEL_PREFERENCE, CHANNELS_HEADER, type Channel, decideUpgrade, detectBridgeCapability, highestMutualChannel, type InboundSignals, REPLY_HEADER, type UpgradeDecision, type UpgradeOffer, type UpgradeResponse, } from "./negotiate.js";
 export { addInterpretation, type Calibration, clampConfidence, classifyReliability, DEFAULT_THRESHOLDS, type Interpretation, type InterpretationGraphContext, type InterpretationMethod, type InterpretationObject, type ReliabilityDecision, type ReliabilityThresholds, } from "./reliability.js";
 export { type BuildReplyOptions, type BuiltReply, buildReply, htmlSafeJson, type MimePart, type OfferedTime, type ReplySigner, } from "./reply.js";
-export { base64Url, canonicalContainer, isValidEmailAddress, isWithinBase, mintUrn, normalizeEmailAddress, safeHttpIri, safeMailtoIri, safeMediaType, safeTelIri, sanitizeText, } from "./safe-iri.js";
+export { base64Url, base64UrlDecode, canonicalContainer, isValidEmailAddress, isWithinBase, mintUrn, normalizeEmailAddress, safeHttpIri, safeMailtoIri, safeMediaType, safeTelIri, sanitizeText, } from "./safe-iri.js";
 export { addSenderPerson, personIriFor, type SenderOptions, type SenderResult } from "./sender.js";
 export { SLACK_AGENTIC_METADATA_EVENT_TYPE, SLACK_CHANNEL, SLACK_RAW_MEDIA_TYPE, SlackChannelAdapter, type SlackChannelAdapterOptions, type SlackParseContext, SlackParseError, slackEventToBridgeMessage, } from "./slack.js";
 export { type CardDiscovery, canonicalPersonKey, createGuardedUpgradeTransport, createPodRelationshipStore, decodeUpgradeResponse, discoverCard, encodeUpgradeOffer, type GuardedUpgradeTransportOptions, InMemoryRelationshipStore, type LoadedRelationship, offerAndNegotiate, type PodRelationshipStoreOptions, RelationshipConflictError, type RelationshipStore, recordBridgeDetected, recordIdentityVerified, recordTransportFailure, revokeVerification, type UpgradeTransport, } from "./upgrade.js";
