@@ -20,11 +20,15 @@ export type Channel = "rdf" | "dpop-sk" | "a2a" | "email";
 /** The preference order (LEGACY-INTEROP.md §5.2): RDF-native ≻ dpop-sk ≻ A2A ≻ email. */
 export const CHANNEL_PREFERENCE: readonly Channel[] = ["rdf", "dpop-sk", "a2a", "email"];
 
-/** The A2A agent-card extension URI advertised for each upgradeable channel. */
+/** The A2A agent-card extension URI advertised for each upgradeable channel.
+ * `a2a` is the `nl2rdf-upgrade-spec` baseline-A2A mode identifier `#a2a-json` (not the bare
+ * `https://a2a-protocol.org/` project URL) — aligning with that spec's mode table so a peer
+ * checking capability declarations against the minted mode identifiers matches this bridge's
+ * advertised value. */
 export const CHANNEL_EXTENSION_URI: Readonly<Record<Channel, string>> = {
   rdf: "https://w3id.org/jeswr/a2a-rdf/v1",
   "dpop-sk": "https://w3id.org/jeswr/dpop-sk/v1",
-  a2a: "https://a2a-protocol.org/",
+  a2a: "https://w3id.org/jeswr/nl2rdf-upgrade/v1#a2a-json",
   email: "urn:agentic:channel:email",
 };
 

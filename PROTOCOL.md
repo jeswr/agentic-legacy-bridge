@@ -51,7 +51,7 @@ Most-preferred first (`CHANNEL_PREFERENCE`):
 |---|---|---|
 | `rdf` | `https://w3id.org/jeswr/a2a-rdf/v1` | RDF-native structured exchange ([`jeswr/a2a-rdf-extension`](https://github.com/jeswr/a2a-rdf-extension)) |
 | `dpop-sk` | `https://w3id.org/jeswr/dpop-sk/v1` | the DPoP-SK browser fast-path ([`jeswr/dpop-sk-spec`](https://github.com/jeswr/dpop-sk-spec)) |
-| `a2a` | `https://a2a-protocol.org/` | plain A2A JSON |
+| `a2a` | `https://w3id.org/jeswr/nl2rdf-upgrade/v1#a2a-json` | plain A2A JSON — the [`nl2rdf-upgrade-spec`](https://github.com/jeswr/nl2rdf-upgrade-spec) baseline-A2A mode identifier |
 | `email` | `urn:agentic:channel:email` | the floor — always works |
 
 `highestMutualChannel(local, peer)` returns the highest channel both sides support, falling back to
