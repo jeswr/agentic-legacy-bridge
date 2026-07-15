@@ -148,6 +148,8 @@ export declare const AGENTIC_AGENT_CARD = "https://w3id.org/jeswr/agentic#agentC
 export declare const AGENTIC_OFFERED_CHANNEL = "https://w3id.org/jeswr/agentic#offeredChannel";
 /** The protocol-doc hash bound into a pending offer (fail-closed binding). */
 export declare const AGENTIC_OFFER_PROTOCOL_HASH = "https://w3id.org/jeswr/agentic#offerProtocolHash";
+/** The protocol-document IRI bound into a pending offer. */
+export declare const AGENTIC_OFFER_PROTOCOL_SOURCE = "https://w3id.org/jeswr/agentic#offerProtocolSource";
 /** True when the pending offer is security-bearing (a decline ABORTS, never downgrades). */
 export declare const AGENTIC_OFFER_REQUIRED = "https://w3id.org/jeswr/agentic#offerRequired";
 /** The last transition time (`xsd:dateTime`). */

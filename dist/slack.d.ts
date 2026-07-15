@@ -20,13 +20,27 @@
  *  - **validates the `team`/`user` ids before they mint a URN** (`^T…`/`^[UW]…`
  *    shapes). An over-cap / out-of-shape id yields NO sender handle, so
  *    `personIriFor` falls back to a provisional anon node (fail-closed per M2.0) —
- *    an id carrying an IRIREF-forbidden char can never reach a `namedNode()`.
+ *    an id carrying an IRIREF-forbidden char can never reach a `namedNode()`;
+ *  - **refuses bot/app-authored messages to prevent a responder loop, scoped to
+ *    THIS bridge's own identity, PER FIELD and fail-closed** ({@link
+ *    SlackParseContext.ownBotId} / {@link SlackParseContext.ownAppId}). A message
+ *    is accepted as a different bridge's own message ONLY when every identity
+ *    signal it carries (`bot_id`, `app_id`, Slack's `bot_message` subtype) is BOTH
+ *    comparable (the matching `ctx.own*Id` is configured) AND provably
+ *    non-matching; any signal that cannot be compared — no own-id configured for
+ *    that field, or a bare `bot_message` subtype with no id at all — is treated as
+ *    "could be ours" and refused. Without any own-identity configured, every
+ *    bot/app message is refused (the original, safe default); this lets a
+ *    DIFFERENT bridge's own message (e.g. a counterparty advertising Rung-3
+ *    capability via `metadata.event_type: agentic_reply`) be read for its
+ *    `signals` without ever reopening the loop through a partially-configured
+ *    own identity;
  *
- * The remote read side (the live `conversations.history` backfill and the webhook
- * receiver) is NOT built here — M2.1 is the PARSE transform only. When it lands
- * (M2.4) every remote read MUST go through `@jeswr/guarded-fetch`'s node pinning
- * fetch and the bot token rides only as a header on that guarded request, per the
- * {@link ChannelAdapter} security contract.
+ * The Events API receiver lives in the stateless `./webhook` subexport. A live
+ * `conversations.history` backfill is deliberately still a host-injected pull seam;
+ * every such remote read MUST go through `@jeswr/guarded-fetch`'s node-pinning fetch,
+ * with the bot token only in a request header, per the {@link ChannelAdapter}
+ * security contract.
  *
  * ## Events API signature-verification contract (for the M2.4 webhook service)
  *
@@ -71,6 +85,8 @@
 import type { ChannelAdapter, InboundRawMessage } from "./channel.js";
 import { ChannelParseError } from "./errors.js";
 import type { BridgeMessage } from "./message.js";
+import { type Channel } from "./negotiate.js";
+import type { BuiltReply } from "./reply.js";
 /** The channel name written as `agentic:channel` for a Slack message. */
 export declare const SLACK_CHANNEL = "slack";
 /** The media type of the byte-exact raw anchor (a Slack event is JSON). */
@@ -83,6 +99,8 @@ export declare const SLACK_RAW_MEDIA_TYPE = "application/json";
  * mapped into {@link BridgeMessage.signals} for `detectBridgeCapability`.
  */
 export declare const SLACK_AGENTIC_METADATA_EVENT_TYPE = "agentic_reply";
+/** The only Slack Web API endpoint to which the sender will attach a bot token. */
+export declare const SLACK_CHAT_POST_MESSAGE_ENDPOINT = "https://slack.com/api/chat.postMessage";
 /**
  * A controlled, typed, fail-closed refusal (the only throw from
  * {@link slackEventToBridgeMessage}). Extends the channel-neutral
@@ -109,6 +127,30 @@ export interface SlackParseContext {
      * `threadId` workspace-unambiguous (a Slack `ts` is only channel-scoped).
      */
     readonly channelId?: string;
+    /**
+     * THIS bridge's own Slack bot id (from `auth.test`/deployment config), used to
+     * scope loop-prevention to messages this bridge itself posted (roborev job 5335:
+     * a blanket "refuse every bot/app-authored message" throws away a DIFFERENT
+     * counterparty's own bridge advertising Rung-3 capability via
+     * `metadata.event_type: agentic_reply` — M2-DESIGN.md §1.1 — before
+     * {@link slackSignals} ever runs, so cross-bridge capability detection can never
+     * fire on Slack).
+     *
+     * When `ownBotId`/`ownAppId` are both omitted (the default), the SAFE fallback
+     * is preserved: EVERY bot/app-authored message is refused, exactly as before
+     * this field existed. When one or both are supplied, a message is accepted as a
+     * DIFFERENT bridge's own message ONLY when every identity signal it carries
+     * (`bot_id`, `app_id`, the Slack `bot_message` subtype) is BOTH comparable (the
+     * matching own-id is configured) AND provably non-matching — per-field,
+     * fail-closed (roborev job 5342 finding 2: configuring only `ownBotId` must NOT
+     * cause a message that is genuinely this bridge's own but happens to carry only
+     * an `app_id` to be misread as foreign; that field stays uncomparable, so it is
+     * refused, same as the all-omitted default). Sender stays provisional on an
+     * accepted bot/app message — bot messages carry no `user` field.
+     */
+    readonly ownBotId?: string;
+    /** THIS bridge's own Slack app id — see {@link ownBotId}. */
+    readonly ownAppId?: string;
 }
 /**
  * Parse a raw Slack event (an Events API `event_callback` JSON body, or a
@@ -140,6 +182,14 @@ export interface SlackChannelAdapterOptions {
      */
     readonly channelId?: string;
     /**
+     * THIS bridge's own Slack bot/app id — see {@link SlackParseContext.ownBotId}.
+     * Passed through to {@link slackEventToBridgeMessage} unchanged. Omit both to
+     * keep the safe default (refuse every bot/app-authored message).
+     */
+    readonly ownBotId?: string;
+    /** THIS bridge's own Slack app id — see {@link SlackParseContext.ownAppId}. */
+    readonly ownAppId?: string;
+    /**
      * Raw Slack events already received (a webhook delivery batch, a backfill page).
      * The default {@link pullInbound} returns these verbatim. Each is parsed by
      * {@link parse} — the same hardened transform the live webhook receiver will call.
@@ -152,24 +202,64 @@ export interface SlackChannelAdapterOptions {
      * client plugs into WITHOUT touching this class.
      */
     readonly pull?: () => Promise<readonly InboundRawMessage[]>;
+    /**
+     * Optional live reply configuration. Omit it for a read-only adapter; when
+     * present, `sendReply` uses Slack `chat.postMessage` with pointer-form metadata.
+     */
+    readonly reply?: SlackReplySenderOptions;
 }
+/** Injectable live Slack `chat.postMessage` configuration. */
+export interface SlackReplySenderOptions {
+    /** Slack bot token (`xoxb-…`) carrying `chat:write`; never logged or persisted. */
+    readonly botToken: string;
+    /** Injectable fetch for hermetic tests; defaults to `globalThis.fetch`. */
+    readonly fetch?: typeof globalThis.fetch;
+    /**
+     * Config-injected endpoint for deployment/test wiring. It MUST canonicalise to
+     * Slack's exact HTTPS `chat.postMessage` endpoint, preventing token exfiltration.
+     */
+    readonly apiEndpoint?: string;
+    /** Channels advertised in metadata; default `rdf,dpop-sk,a2a` (email is implicit). */
+    readonly supportedChannels?: readonly Channel[];
+    /** Request timeout in ms (default 10s, maximum 120s). */
+    readonly timeoutMs?: number;
+    /** Response-body cap in bytes (default 256 KiB, maximum 1 MiB). */
+    readonly maxResponseBytes?: number;
+}
+/** The Slack reply implementation installed on a configured adapter. */
+export type SlackReplySender = (target: {
+    readonly to: string;
+    readonly inReplyToId?: string;
+}, reply: BuiltReply) => Promise<void>;
 /**
  * The Slack {@link ChannelAdapter}: `parse` is {@link slackEventToBridgeMessage}, so
  * a Slack workspace plugs into the M2.0 `importInbound` pipeline with zero pipeline
  * changes (owner-private write of the byte-exact `.json` anchor + agentic graph +
  * canonical chat message, channel-scoped person URN, deterministic interpretations).
  *
- * Read-only in M2.1 — `sendReply` (the `chat.postMessage` `metadata.event_payload`
- * structured carrier, see the module doc) is the M2.4 live-transport phase.
+ * Read-only when `options.reply` is omitted. With reply credentials it installs the
+ * `chat.postMessage` pointer-form structured carrier without changing parse/pull.
  */
 export declare class SlackChannelAdapter implements ChannelAdapter {
     readonly channel = "slack";
+    readonly sendReply?: SlackReplySender;
     private readonly teamId;
     private readonly channelId;
+    private readonly ownBotId;
+    private readonly ownAppId;
     private readonly messages;
     private readonly pullFn;
     constructor(options?: SlackChannelAdapterOptions);
     parse(item: InboundRawMessage): BridgeMessage;
     pullInbound(): Promise<readonly InboundRawMessage[]>;
 }
+/**
+ * Create the live Slack reply boundary. The human answer + A2A recommendation ride
+ * in top-level plain `text`; the structured carrier uses bounded, invisible message
+ * metadata (`event_type: agentic_reply`, `channels` + pod-copy `reply` pointer).
+ *
+ * The token is attached only after the endpoint, target, thread and body validate.
+ * Redirects and response bombs are refused, and Slack's JSON `ok` flag is required.
+ */
+export declare function createSlackReplySender(options: SlackReplySenderOptions): SlackReplySender;
 //# sourceMappingURL=slack.d.ts.map

@@ -29,9 +29,43 @@
 import { DataFactory, Parser, Store, Writer } from "n3";
 import { asChannel, decideUpgrade, } from "./negotiate.js";
 import { asUrn, safeHttpIri, sanitizeText } from "./safe-iri.js";
-import { AGENTIC_AGENT_CARD, AGENTIC_COUNTERPARTY, AGENTIC_CURRENT_CHANNEL, AGENTIC_OFFER_PROTOCOL_HASH, AGENTIC_OFFER_REQUIRED, AGENTIC_OFFERED_CHANNEL, AGENTIC_RELATIONSHIP, AGENTIC_RELATIONSHIP_STATE, AGENTIC_STATE_ABORTED, AGENTIC_STATE_BRIDGE_DETECTED, AGENTIC_STATE_CARD_DISCOVERED, AGENTIC_STATE_IDENTITY_VERIFIED, AGENTIC_STATE_LEGACY_ONLY, AGENTIC_STATE_OFFER_PENDING, AGENTIC_STATE_UPGRADED, AGENTIC_UPDATED_AT, AGENTIC_VERIFIED_WEB_ID, DCT, PREFIXES, RDF_TYPE, XSD_BOOLEAN, XSD_DATE_TIME, } from "./vocab.js";
+import { AGENTIC_AGENT_CARD, AGENTIC_COUNTERPARTY, AGENTIC_CURRENT_CHANNEL, AGENTIC_OFFER_PROTOCOL_HASH, AGENTIC_OFFER_PROTOCOL_SOURCE, AGENTIC_OFFER_REQUIRED, AGENTIC_OFFERED_CHANNEL, AGENTIC_RELATIONSHIP, AGENTIC_RELATIONSHIP_STATE, AGENTIC_STATE_ABORTED, AGENTIC_STATE_BRIDGE_DETECTED, AGENTIC_STATE_CARD_DISCOVERED, AGENTIC_STATE_IDENTITY_VERIFIED, AGENTIC_STATE_LEGACY_ONLY, AGENTIC_STATE_OFFER_PENDING, AGENTIC_STATE_UPGRADED, AGENTIC_UPDATED_AT, AGENTIC_VERIFIED_WEB_ID, DCT, PREFIXES, RDF_TYPE, XSD_BOOLEAN, XSD_DATE_TIME, } from "./vocab.js";
 const { namedNode, literal } = DataFactory;
 const DCT_DESCRIPTION = `${DCT}description`;
+const MAX_PROTOCOL_HASH_LENGTH = 256;
+// biome-ignore lint/suspicious/noControlCharactersInRegex: protocol bindings must reject all controls.
+const PROTOCOL_HASH_CONTROL = /[\u0000-\u001F\u007F-\u009F]/;
+/** Validate and canonicalise an untrusted offer before it becomes persisted state. */
+export function normalizeUpgradeOffer(offer) {
+    if (typeof offer !== "object" || offer === null || Array.isArray(offer))
+        return undefined;
+    const rec = offer;
+    const targetChannel = asChannel(rec.targetChannel);
+    if (targetChannel === undefined || targetChannel === "email")
+        return undefined;
+    let protocolHash;
+    if (rec.protocolHash !== undefined) {
+        if (typeof rec.protocolHash !== "string" ||
+            rec.protocolHash.length === 0 ||
+            rec.protocolHash.length > MAX_PROTOCOL_HASH_LENGTH ||
+            PROTOCOL_HASH_CONTROL.test(rec.protocolHash)) {
+            return undefined;
+        }
+        protocolHash = rec.protocolHash;
+    }
+    let protocolSource;
+    if (rec.protocolSource !== undefined) {
+        protocolSource = safeHttpIri(rec.protocolSource);
+        if (protocolSource === undefined)
+            return undefined;
+    }
+    return {
+        targetChannel,
+        required: rec.required === true,
+        ...(protocolHash !== undefined ? { protocolHash } : {}),
+        ...(protocolSource !== undefined ? { protocolSource } : {}),
+    };
+}
 /** Assemble a new immutable state, omitting undefined optionals. */
 function assemble(personIri, state, currentChannel, iso, opt) {
     return {
@@ -123,13 +157,9 @@ export function transition(state, event, now = new Date()) {
             if (state.verifiedWebId === undefined || state.agentCardUrl === undefined) {
                 return { ok: false, reason: "offer before a verified card discovery." };
             }
-            const offer = event.offer;
-            if (asChannel(offer.targetChannel) === undefined) {
-                return { ok: false, reason: "offer: unknown target channel." };
-            }
-            if (offer.targetChannel === "email") {
-                return { ok: false, reason: "offer target must be an upgrade above the email floor." };
-            }
+            const offer = normalizeUpgradeOffer(event.offer);
+            if (offer === undefined)
+                return { ok: false, reason: "offer is malformed or unsafe." };
             return {
                 ok: true,
                 state: assemble(person, "offer-pending", state.currentChannel, iso, {
@@ -251,6 +281,9 @@ export function assertRelationshipInvariant(state) {
         if (state.pendingOffer.targetChannel === "email") {
             throw new Error("invariant: a pending offer must target an upgrade above the floor.");
         }
+        if (normalizeUpgradeOffer(state.pendingOffer) === undefined) {
+            throw new Error("invariant: pending offer is malformed or unsafe.");
+        }
     }
     if (state.state === "upgraded" && state.upgradedChannel !== state.currentChannel) {
         throw new Error("invariant: upgraded state must have upgradedChannel === currentChannel.");
@@ -306,6 +339,7 @@ function stateIriToName(iri) {
  * `resourceUrl` / `personIri`.
  */
 export async function serializeRelationship(state, resourceUrl) {
+    assertRelationshipInvariant(state);
     const safeResource = safeHttpIri(resourceUrl);
     if (safeResource === undefined) {
         throw new Error("serializeRelationship: resourceUrl must be a safe http(s) IRI.");
@@ -336,6 +370,13 @@ export async function serializeRelationship(state, resourceUrl) {
         store.addQuad(subject, namedNode(AGENTIC_OFFER_REQUIRED), literal(String(state.pendingOffer.required === true), namedNode(XSD_BOOLEAN)));
         if (state.pendingOffer.protocolHash !== undefined) {
             store.addQuad(subject, namedNode(AGENTIC_OFFER_PROTOCOL_HASH), literal(sanitizeText(state.pendingOffer.protocolHash).slice(0, 256)));
+        }
+        if (state.pendingOffer.protocolSource !== undefined) {
+            const source = safeHttpIri(state.pendingOffer.protocolSource);
+            if (source === undefined) {
+                throw new Error("serializeRelationship: pending protocolSource is unsafe.");
+            }
+            store.addQuad(subject, namedNode(AGENTIC_OFFER_PROTOCOL_SOURCE), namedNode(source));
         }
     }
     if (state.abortReason !== undefined) {
@@ -392,11 +433,19 @@ export function parseRelationship(turtle, resourceUrl) {
     const offeredChannel = asChannel(one(AGENTIC_OFFERED_CHANNEL));
     if (offeredChannel !== undefined) {
         const hash = one(AGENTIC_OFFER_PROTOCOL_HASH);
-        pendingOffer = {
+        const sourceRaw = one(AGENTIC_OFFER_PROTOCOL_SOURCE);
+        const source = safeHttpIri(sourceRaw);
+        if (sourceRaw !== undefined && source === undefined)
+            return undefined;
+        const candidate = {
             targetChannel: offeredChannel,
             required: one(AGENTIC_OFFER_REQUIRED) === "true",
             ...(hash !== undefined ? { protocolHash: hash } : {}),
+            ...(source !== undefined ? { protocolSource: source } : {}),
         };
+        pendingOffer = normalizeUpgradeOffer(candidate);
+        if (pendingOffer === undefined)
+            return undefined;
     }
     const rebuilt = assemble(person, stateName, channel, updatedAt ?? new Date(0).toISOString(), {
         ...(verifiedWebId !== undefined ? { verifiedWebId } : {}),

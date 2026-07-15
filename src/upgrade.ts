@@ -33,6 +33,7 @@ import { asUrn, base64Url, canonicalContainer, safeHttpIri } from "./safe-iri.js
 import { readAllBounded } from "./stream-limit.js";
 import {
   initialRelationship,
+  normalizeUpgradeOffer,
   parseRelationship,
   type RelationshipEvent,
   type RelationshipState,
@@ -125,7 +126,12 @@ export interface PodRelationshipStoreOptions {
   readonly writeFetch: typeof globalThis.fetch;
   /** The read `fetch` for loads (defaults to `writeFetch`). */
   readonly readFetch?: typeof globalThis.fetch;
+  /** Maximum relationship Turtle bytes read from the pod (default 256 KiB, max 1 MiB). */
+  readonly maxStateBytes?: number;
 }
+
+const DEFAULT_MAX_STATE_BYTES = 256 * 1024;
+const MAX_STATE_BYTES = 1024 * 1024;
 
 /**
  * A pod-backed {@link RelationshipStore}: one owner-private Turtle resource per
@@ -144,6 +150,12 @@ export function createPodRelationshipStore(
   }
   const writeFetch = options.writeFetch;
   const readFetch = options.readFetch ?? options.writeFetch;
+  const maxStateBytes = options.maxStateBytes ?? DEFAULT_MAX_STATE_BYTES;
+  if (!Number.isInteger(maxStateBytes) || maxStateBytes < 1 || maxStateBytes > MAX_STATE_BYTES) {
+    throw new Error(
+      `relationship store: maxStateBytes must be an integer from 1 to ${MAX_STATE_BYTES}.`,
+    );
+  }
   // Canonicalise the personIri to the SAME key the state machine uses, so `load` and
   // `save` (which is keyed on the canonical `state.personIri`) always resolve to the
   // SAME resource URL (a roborev M2.4 finding — see canonicalPersonKey).
@@ -159,11 +171,18 @@ export function createPodRelationshipStore(
       if (!res.ok) {
         throw new Error(`relationship load failed: GET ${url} -> ${res.status} ${res.statusText}`);
       }
-      const turtle = await res.text();
+      const bytes = await readAllBounded(res.body, maxStateBytes);
+      if (bytes === undefined) {
+        throw new Error("relationship load failed: state resource exceeded the size cap.");
+      }
+      const turtle = new TextDecoder().decode(bytes);
       const state = parseRelationship(turtle, url);
       if (state === undefined) return undefined; // unparseable → treat as no state (fail-closed)
       const etag = res.headers.get("etag");
-      return etag !== null ? { state, version: etag } : { state };
+      if (etag === null || etag.length === 0) {
+        throw new Error("relationship load failed: existing state has no ETag for safe CAS.");
+      }
+      return { state, version: etag };
     },
 
     async save(state: RelationshipState, expectedVersion?: string): Promise<void> {
@@ -215,6 +234,7 @@ export interface GuardedUpgradeTransportOptions {
 }
 
 const DEFAULT_MAX_RESPONSE_BYTES = 256 * 1024;
+const MAX_RESPONSE_BYTES = 1024 * 1024;
 
 /**
  * The default SSRF-safe upgrade transport: POST the JSON payload to the VERIFIED target
@@ -228,6 +248,15 @@ export function createGuardedUpgradeTransport(
 ): UpgradeTransport {
   const fetchImpl = options.fetch ?? createNodeGuardedFetch();
   const maxResponseBytes = options.maxResponseBytes ?? DEFAULT_MAX_RESPONSE_BYTES;
+  if (
+    !Number.isInteger(maxResponseBytes) ||
+    maxResponseBytes < 1 ||
+    maxResponseBytes > MAX_RESPONSE_BYTES
+  ) {
+    throw new Error(
+      `upgrade transport: maxResponseBytes must be an integer from 1 to ${MAX_RESPONSE_BYTES}.`,
+    );
+  }
   return async ({ target, payload }) => {
     const safe = safeHttpIri(target);
     if (safe === undefined || new URL(safe).protocol !== "https:") {
@@ -280,8 +309,21 @@ export function decodeUpgradeResponse(raw: unknown): UpgradeResponse {
   if (typeof raw !== "object" || raw === null) return { accept: false };
   const rec = raw as Record<string, unknown>;
   const accept = rec.accept === true;
-  const protocolHash = typeof rec.protocolHash === "string" ? rec.protocolHash : undefined;
+  const protocolHash =
+    typeof rec.protocolHash === "string" &&
+    rec.protocolHash.length > 0 &&
+    rec.protocolHash.length <= 256 &&
+    sanitizePeerHash(rec.protocolHash) === rec.protocolHash
+      ? rec.protocolHash
+      : undefined;
   return { accept, ...(protocolHash !== undefined ? { protocolHash } : {}) };
+}
+
+/** Reject controls without silently changing the protocol binding echoed by a peer. */
+function sanitizePeerHash(value: string): string {
+  // JSON strings may contain terminal/log controls; hashes never need them.
+  // biome-ignore lint/suspicious/noControlCharactersInRegex: rejecting every control is intentional.
+  return value.replace(/[\u0000-\u001F\u007F-\u009F]/g, "");
 }
 
 // --- the orchestration driver ------------------------------------------------
@@ -364,9 +406,9 @@ export async function discoverCard(
  * Send an {@link UpgradeOffer} to the verified card endpoint via the injectable
  * transport, then resolve the peer's response through `decideUpgrade` fail-closed. The
  * transport target is the VERIFIED `agentCardUrl` only. The intermediate `offer-pending`
- * is transient (not persisted): a transport failure leaves the relationship at
- * `card-discovered` (retryable). The RESOLVED state (upgraded / stay / aborted) is
- * persisted with the loaded version (optimistic concurrency).
+ * state is persisted BEFORE transport. If delivery fails, that durable state is retained
+ * and an identical retry resumes it; a different offer is refused. The resolved state
+ * (upgraded / stay / aborted) is then saved with optimistic concurrency.
  */
 export async function offerAndNegotiate(
   store: RelationshipStore,
@@ -377,17 +419,50 @@ export async function offerAndNegotiate(
 ): Promise<TransitionResult> {
   const loaded = await store.load(personIri);
   if (loaded === undefined) return { ok: false, reason: "no relationship for counterparty." };
-  const offered = transition(loaded.state, { kind: "offer", offer }, now);
-  if (!offered.ok) return offered;
-  const target = offered.state.agentCardUrl;
+
+  const normalized = normalizeUpgradeOffer(offer);
+  if (normalized === undefined) return { ok: false, reason: "offer is malformed or unsafe." };
+
+  let pending: LoadedRelationship;
+  if (loaded.state.state === "offer-pending") {
+    if (!sameOffer(loaded.state.pendingOffer, normalized)) {
+      return { ok: false, reason: "a different upgrade offer is already pending." };
+    }
+    pending = loaded;
+  } else {
+    const offered = transition(loaded.state, { kind: "offer", offer: normalized }, now);
+    if (!offered.ok) return offered;
+    await store.save(offered.state, loaded.version);
+    const persisted = await store.load(personIri);
+    if (
+      persisted === undefined ||
+      persisted.state.state !== "offer-pending" ||
+      !sameOffer(persisted.state.pendingOffer, normalized)
+    ) {
+      return { ok: false, reason: "persisted offer-pending state could not be confirmed." };
+    }
+    pending = persisted;
+  }
+
+  const target = pending.state.agentCardUrl;
   if (target === undefined) return { ok: false, reason: "no verified card endpoint to offer to." };
 
-  const raw = await transport({ target, payload: encodeUpgradeOffer(offer) });
+  const raw = await transport({ target, payload: encodeUpgradeOffer(normalized) });
   const response = decodeUpgradeResponse(raw);
-  const resolved = transition(offered.state, { kind: "offer-response", response }, now);
+  const resolved = transition(pending.state, { kind: "offer-response", response }, now);
   if (!resolved.ok) return resolved;
-  await store.save(resolved.state, loaded.version);
+  await store.save(resolved.state, pending.version);
   return resolved;
+}
+
+function sameOffer(left: UpgradeOffer | undefined, right: UpgradeOffer): boolean {
+  return (
+    left !== undefined &&
+    left.targetChannel === right.targetChannel &&
+    left.required === right.required &&
+    left.protocolHash === right.protocolHash &&
+    left.protocolSource === right.protocolSource
+  );
 }
 
 /**

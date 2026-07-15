@@ -58,6 +58,60 @@ describe("orchestration — the ratchet is persisted", () => {
     expect(loaded?.state.state).toBe("upgraded");
     expect(loaded?.state.currentChannel).toBe("rdf");
   });
+
+  it("persists offer-pending before invoking transport", async () => {
+    const store = new InMemoryRelationshipStore();
+    await driveToCard(store);
+    const transport: UpgradeTransport = async () => {
+      expect((await store.load(PERSON))?.state.state).toBe("offer-pending");
+      return { accept: false };
+    };
+
+    await offerAndNegotiate(store, PERSON, rdfOffer, transport, AT);
+    expect((await store.load(PERSON))?.state.state).toBe("card-discovered");
+  });
+
+  it("retains offer-pending on transport failure and resumes an identical retry", async () => {
+    const store = new InMemoryRelationshipStore();
+    await driveToCard(store);
+    await expect(
+      offerAndNegotiate(store, PERSON, rdfOffer, async () => {
+        throw new Error("peer unavailable");
+      }),
+    ).rejects.toThrow(/peer unavailable/);
+    expect((await store.load(PERSON))?.state.state).toBe("offer-pending");
+
+    const retried = await offerAndNegotiate(
+      store,
+      PERSON,
+      rdfOffer,
+      async () => ({ accept: true, protocolHash: "h" }),
+      AT,
+    );
+    expect(retried).toMatchObject({ ok: true, state: { state: "upgraded" } });
+  });
+
+  it("refuses to replace a durable pending offer with a different offer", async () => {
+    const store = new InMemoryRelationshipStore();
+    await driveToCard(store);
+    await expect(
+      offerAndNegotiate(store, PERSON, rdfOffer, async () => {
+        throw new Error("peer unavailable");
+      }),
+    ).rejects.toThrow();
+    const transport = vi.fn(async () => ({ accept: true }));
+
+    const result = await offerAndNegotiate(
+      store,
+      PERSON,
+      { ...rdfOffer, targetChannel: "a2a" },
+      transport,
+      AT,
+    );
+    expect(result).toMatchObject({ ok: false, reason: expect.stringMatching(/different/) });
+    expect(transport).not.toHaveBeenCalled();
+    expect((await store.load(PERSON))?.state.pendingOffer).toEqual(rdfOffer);
+  });
 });
 
 describe("orchestration — SSRF gating (verified endpoints only)", () => {
@@ -113,6 +167,17 @@ describe("orchestration — persistence keys on the CANONICAL personIri", () => 
 });
 
 describe("createGuardedUpgradeTransport — https-only, no payload-picked target", () => {
+  it.each([
+    0,
+    -1,
+    1.5,
+    Number.NaN,
+    Number.POSITIVE_INFINITY,
+    1024 * 1024 + 1,
+  ])("rejects an invalid maxResponseBytes value: %s", (maxResponseBytes) => {
+    expect(() => createGuardedUpgradeTransport({ maxResponseBytes })).toThrow(/maxResponseBytes/);
+  });
+
   it("aborts + throws when the peer response exceeds the size cap", async () => {
     const bigBody = "x".repeat(2000);
     const fetchImpl = (async () => new Response(bigBody, { status: 200 })) as typeof fetch;
@@ -174,6 +239,16 @@ describe("decodeUpgradeResponse — fail-closed", () => {
 
   it("drops a non-string protocolHash", () => {
     expect(decodeUpgradeResponse({ accept: true, protocolHash: 5 })).toEqual({ accept: true });
+  });
+
+  it("drops an empty, oversized, or control-bearing protocolHash", () => {
+    expect(decodeUpgradeResponse({ accept: true, protocolHash: "" })).toEqual({ accept: true });
+    expect(decodeUpgradeResponse({ accept: true, protocolHash: "x".repeat(257) })).toEqual({
+      accept: true,
+    });
+    expect(decodeUpgradeResponse({ accept: true, protocolHash: "ok\nspoof" })).toEqual({
+      accept: true,
+    });
   });
 });
 
@@ -242,5 +317,51 @@ describe("createPodRelationshipStore — pod round-trip with CAS", () => {
     const pod = new FakePod();
     const store = createPodRelationshipStore({ container: CONTAINER, writeFetch: pod.fetch });
     expect(await store.load(PERSON)).toBeUndefined();
+  });
+
+  it.each([
+    0,
+    -1,
+    1.5,
+    Number.NaN,
+    Number.POSITIVE_INFINITY,
+    1024 * 1024 + 1,
+  ])("rejects an invalid maxStateBytes value: %s", (maxStateBytes) => {
+    const fetchImpl = vi.fn() as unknown as typeof fetch;
+    expect(() =>
+      createPodRelationshipStore({ container: CONTAINER, writeFetch: fetchImpl, maxStateBytes }),
+    ).toThrow(/maxStateBytes/);
+  });
+
+  it("refuses an existing state without an ETag because safe CAS is impossible", async () => {
+    const pod = new FakePod();
+    const writer = createPodRelationshipStore({ container: CONTAINER, writeFetch: pod.fetch });
+    const mem = new InMemoryRelationshipStore();
+    await driveToCard(mem);
+    await writer.save(must(await mem.load(PERSON)).state);
+    const noEtagFetch = (async (url: string | URL, init?: RequestInit) => {
+      const response = await pod.fetch(url, init);
+      return new Response(response.body, { status: response.status });
+    }) as typeof fetch;
+    const reader = createPodRelationshipStore({
+      container: CONTAINER,
+      writeFetch: pod.fetch,
+      readFetch: noEtagFetch,
+    });
+    await expect(reader.load(PERSON)).rejects.toThrow(/no ETag/);
+  });
+
+  it("bounds relationship-state reads before parsing", async () => {
+    const pod = new FakePod();
+    const writer = createPodRelationshipStore({ container: CONTAINER, writeFetch: pod.fetch });
+    const mem = new InMemoryRelationshipStore();
+    await driveToCard(mem);
+    await writer.save(must(await mem.load(PERSON)).state);
+    const reader = createPodRelationshipStore({
+      container: CONTAINER,
+      writeFetch: pod.fetch,
+      maxStateBytes: 16,
+    });
+    await expect(reader.load(PERSON)).rejects.toThrow(/size cap/);
   });
 });

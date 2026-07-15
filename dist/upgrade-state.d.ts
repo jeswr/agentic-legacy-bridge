@@ -50,40 +50,35 @@ export interface RelationshipState {
     readonly updatedAt?: string;
 }
 /** An event driving a {@link transition}. */
-export type RelationshipEvent = 
-/** Inbound shows bridge markers (`detectBridgeCapability.capable`). */
-{
+export type RelationshipEvent = {
+    /** Inbound shows bridge markers (`detectBridgeCapability.capable`). */
     readonly kind: "bridge-detected";
-}
-/** The control-of-both verification completed for a WebID (§4.3). */
- | {
+} | {
+    /** The control-of-both verification completed for a WebID (§4.3). */
     readonly kind: "identity-verified";
     readonly webId: string;
-}
-/** `discoverAgent(webid)` succeeded AND the card↔WebID binding verified. */
- | {
+} | {
+    /** `discoverAgent(webid)` succeeded AND the card↔WebID binding verified. */
     readonly kind: "card-discovered";
     readonly agentCardUrl: string;
-}
-/** Send an `UpgradeOffer` (from `card-discovered`, when `highestMutualChannel > email`). */
- | {
+} | {
+    /** Send an `UpgradeOffer` after a better mutual channel is found. */
     readonly kind: "offer";
     readonly offer: UpgradeOffer;
-}
-/** The peer's `UpgradeResponse` — resolved through `decideUpgrade` fail-closed. */
- | {
+} | {
+    /** The peer response, resolved through `decideUpgrade` fail-closed. */
     readonly kind: "offer-response";
     readonly response: UpgradeResponse;
-}
-/** A send failed / card revoked / hash drifted on the upgraded channel. */
- | {
+} | {
+    /** A send failed / card was revoked / protocol hash drifted. */
     readonly kind: "transport-failure";
     readonly securityBearing?: boolean;
-}
-/** The owner revoked the verified WebID → drop back to `bridge-detected`. */
- | {
+} | {
+    /** The owner revoked the verified WebID. */
     readonly kind: "revoke-verification";
 };
+/** Validate and canonicalise an untrusted offer before it becomes persisted state. */
+export declare function normalizeUpgradeOffer(offer: unknown): UpgradeOffer | undefined;
 /** The result of a {@link transition}: the next state, or a fail-closed refusal. */
 export type TransitionResult = {
     readonly ok: true;

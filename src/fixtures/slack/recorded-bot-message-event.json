@@ -1,0 +1,16 @@
+{
+  "team_id": "T123ABC456",
+  "event": {
+    "type": "message",
+    "subtype": "bot_message",
+    "channel": "C123ABC456",
+    "bot_id": "B123ABC456",
+    "app_id": "A123ABC456",
+    "username": "Bridge Bot",
+    "text": "An app-authored message that must not trigger another bot reply.",
+    "ts": "1784383500.000400"
+  },
+  "type": "event_callback",
+  "event_id": "EvBOT000001",
+  "event_time": 1784383500
+}

@@ -23,7 +23,22 @@ describe("buildReply", () => {
     expect((subject.object as unknown[]).length).toBe(1);
     expect(r.headers["X-Agentic-Reply"]).toBe("https://pod.example/replies/1.ttl");
     expect(r.onboardingBlock).toContain("https://onboard.example/#/from/x");
+    expect(r.humanText).toContain("full agentic (A2A) mode");
     expect(r.mimePart.contentType).toBe("application/ld+json");
+  });
+
+  it("prepends a control-stripped, capped answer to the single upgrade recommendation", async () => {
+    const r = await buildReply({
+      inReplyTo: RAW,
+      humanText: `Answer\u0000\u001b[31m${"x".repeat(30_000)}`,
+      onboardingUrl: "https://onboard.example/#/t/x",
+    });
+    expect(r.humanText).toBeDefined();
+    expect(r.humanText).not.toContain("\u0000");
+    expect(r.humanText).not.toContain("\u001b");
+    expect(r.humanText).toContain("[31m");
+    expect(r.humanText).toContain("full agentic (A2A) mode");
+    expect(r.humanText?.length).toBeLessThan(21_000);
   });
 
   it("drops invalid offered times + unsafe URLs (fail-closed)", async () => {

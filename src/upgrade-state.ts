@@ -41,6 +41,7 @@ import {
   AGENTIC_COUNTERPARTY,
   AGENTIC_CURRENT_CHANNEL,
   AGENTIC_OFFER_PROTOCOL_HASH,
+  AGENTIC_OFFER_PROTOCOL_SOURCE,
   AGENTIC_OFFER_REQUIRED,
   AGENTIC_OFFERED_CHANNEL,
   AGENTIC_RELATIONSHIP,
@@ -98,20 +99,77 @@ export interface RelationshipState {
 
 /** An event driving a {@link transition}. */
 export type RelationshipEvent =
-  /** Inbound shows bridge markers (`detectBridgeCapability.capable`). */
-  | { readonly kind: "bridge-detected" }
-  /** The control-of-both verification completed for a WebID (§4.3). */
-  | { readonly kind: "identity-verified"; readonly webId: string }
-  /** `discoverAgent(webid)` succeeded AND the card↔WebID binding verified. */
-  | { readonly kind: "card-discovered"; readonly agentCardUrl: string }
-  /** Send an `UpgradeOffer` (from `card-discovered`, when `highestMutualChannel > email`). */
-  | { readonly kind: "offer"; readonly offer: UpgradeOffer }
-  /** The peer's `UpgradeResponse` — resolved through `decideUpgrade` fail-closed. */
-  | { readonly kind: "offer-response"; readonly response: UpgradeResponse }
-  /** A send failed / card revoked / hash drifted on the upgraded channel. */
-  | { readonly kind: "transport-failure"; readonly securityBearing?: boolean }
-  /** The owner revoked the verified WebID → drop back to `bridge-detected`. */
-  | { readonly kind: "revoke-verification" };
+  | {
+      /** Inbound shows bridge markers (`detectBridgeCapability.capable`). */
+      readonly kind: "bridge-detected";
+    }
+  | {
+      /** The control-of-both verification completed for a WebID (§4.3). */
+      readonly kind: "identity-verified";
+      readonly webId: string;
+    }
+  | {
+      /** `discoverAgent(webid)` succeeded AND the card↔WebID binding verified. */
+      readonly kind: "card-discovered";
+      readonly agentCardUrl: string;
+    }
+  | {
+      /** Send an `UpgradeOffer` after a better mutual channel is found. */
+      readonly kind: "offer";
+      readonly offer: UpgradeOffer;
+    }
+  | {
+      /** The peer response, resolved through `decideUpgrade` fail-closed. */
+      readonly kind: "offer-response";
+      readonly response: UpgradeResponse;
+    }
+  | {
+      /** A send failed / card was revoked / protocol hash drifted. */
+      readonly kind: "transport-failure";
+      readonly securityBearing?: boolean;
+    }
+  | {
+      /** The owner revoked the verified WebID. */
+      readonly kind: "revoke-verification";
+    };
+
+const MAX_PROTOCOL_HASH_LENGTH = 256;
+// biome-ignore lint/suspicious/noControlCharactersInRegex: protocol bindings must reject all controls.
+const PROTOCOL_HASH_CONTROL = /[\u0000-\u001F\u007F-\u009F]/;
+
+/** Validate and canonicalise an untrusted offer before it becomes persisted state. */
+export function normalizeUpgradeOffer(offer: unknown): UpgradeOffer | undefined {
+  if (typeof offer !== "object" || offer === null || Array.isArray(offer)) return undefined;
+  const rec = offer as Record<string, unknown>;
+  const targetChannel = asChannel(rec.targetChannel);
+  if (targetChannel === undefined || targetChannel === "email") return undefined;
+
+  let protocolHash: string | undefined;
+  if (rec.protocolHash !== undefined) {
+    if (
+      typeof rec.protocolHash !== "string" ||
+      rec.protocolHash.length === 0 ||
+      rec.protocolHash.length > MAX_PROTOCOL_HASH_LENGTH ||
+      PROTOCOL_HASH_CONTROL.test(rec.protocolHash)
+    ) {
+      return undefined;
+    }
+    protocolHash = rec.protocolHash;
+  }
+
+  let protocolSource: string | undefined;
+  if (rec.protocolSource !== undefined) {
+    protocolSource = safeHttpIri(rec.protocolSource);
+    if (protocolSource === undefined) return undefined;
+  }
+
+  return {
+    targetChannel,
+    required: rec.required === true,
+    ...(protocolHash !== undefined ? { protocolHash } : {}),
+    ...(protocolSource !== undefined ? { protocolSource } : {}),
+  };
+}
 
 /** The result of a {@link transition}: the next state, or a fail-closed refusal. */
 export type TransitionResult =
@@ -232,13 +290,8 @@ export function transition(
       if (state.verifiedWebId === undefined || state.agentCardUrl === undefined) {
         return { ok: false, reason: "offer before a verified card discovery." };
       }
-      const offer = event.offer;
-      if (asChannel(offer.targetChannel) === undefined) {
-        return { ok: false, reason: "offer: unknown target channel." };
-      }
-      if (offer.targetChannel === "email") {
-        return { ok: false, reason: "offer target must be an upgrade above the email floor." };
-      }
+      const offer = normalizeUpgradeOffer(event.offer);
+      if (offer === undefined) return { ok: false, reason: "offer is malformed or unsafe." };
       return {
         ok: true,
         state: assemble(person, "offer-pending", state.currentChannel, iso, {
@@ -363,6 +416,9 @@ export function assertRelationshipInvariant(state: RelationshipState): void {
     if (state.pendingOffer.targetChannel === "email") {
       throw new Error("invariant: a pending offer must target an upgrade above the floor.");
     }
+    if (normalizeUpgradeOffer(state.pendingOffer) === undefined) {
+      throw new Error("invariant: pending offer is malformed or unsafe.");
+    }
   }
   if (state.state === "upgraded" && state.upgradedChannel !== state.currentChannel) {
     throw new Error("invariant: upgraded state must have upgradedChannel === currentChannel.");
@@ -426,6 +482,7 @@ export async function serializeRelationship(
   state: RelationshipState,
   resourceUrl: string,
 ): Promise<string> {
+  assertRelationshipInvariant(state);
   const safeResource = safeHttpIri(resourceUrl);
   if (safeResource === undefined) {
     throw new Error("serializeRelationship: resourceUrl must be a safe http(s) IRI.");
@@ -470,6 +527,13 @@ export async function serializeRelationship(
         namedNode(AGENTIC_OFFER_PROTOCOL_HASH),
         literal(sanitizeText(state.pendingOffer.protocolHash).slice(0, 256)),
       );
+    }
+    if (state.pendingOffer.protocolSource !== undefined) {
+      const source = safeHttpIri(state.pendingOffer.protocolSource);
+      if (source === undefined) {
+        throw new Error("serializeRelationship: pending protocolSource is unsafe.");
+      }
+      store.addQuad(subject, namedNode(AGENTIC_OFFER_PROTOCOL_SOURCE), namedNode(source));
     }
   }
   if (state.abortReason !== undefined) {
@@ -540,11 +604,17 @@ export function parseRelationship(
   const offeredChannel = asChannel(one(AGENTIC_OFFERED_CHANNEL));
   if (offeredChannel !== undefined) {
     const hash = one(AGENTIC_OFFER_PROTOCOL_HASH);
-    pendingOffer = {
+    const sourceRaw = one(AGENTIC_OFFER_PROTOCOL_SOURCE);
+    const source = safeHttpIri(sourceRaw);
+    if (sourceRaw !== undefined && source === undefined) return undefined;
+    const candidate: UpgradeOffer = {
       targetChannel: offeredChannel,
       required: one(AGENTIC_OFFER_REQUIRED) === "true",
       ...(hash !== undefined ? { protocolHash: hash } : {}),
+      ...(source !== undefined ? { protocolSource: source } : {}),
     };
+    pendingOffer = normalizeUpgradeOffer(candidate);
+    if (pendingOffer === undefined) return undefined;
   }
 
   const rebuilt = assemble(person, stateName, channel, updatedAt ?? new Date(0).toISOString(), {

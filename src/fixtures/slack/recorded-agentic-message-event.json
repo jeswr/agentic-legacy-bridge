@@ -1,0 +1,20 @@
+{
+  "team_id": "T123ABC456",
+  "event": {
+    "type": "message",
+    "channel": "D123ABC456",
+    "user": "U987ZYX654",
+    "text": "Here is the structured answer.",
+    "ts": "1784383300.000200",
+    "metadata": {
+      "event_type": "agentic_reply",
+      "event_payload": {
+        "channels": "rdf,dpop-sk,a2a",
+        "reply": "https://pod.example/replies/alb-123.ttl"
+      }
+    }
+  },
+  "type": "event_callback",
+  "event_id": "Ev987ZYX654",
+  "event_time": 1784383300
+}

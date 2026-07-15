@@ -152,6 +152,15 @@ export {
   type OfferedTime,
   type ReplySigner,
 } from "./reply.js";
+// --- RESPOND-AND-RECOMMEND-UPGRADE policy (approval-gated by default) ---
+export {
+  type RecommendedReplyDraft,
+  type ReplyApprover,
+  type ReplyDeliveryMode,
+  type RespondAndRecommendUpgradeOptions,
+  type RespondAndRecommendUpgradeResult,
+  respondAndRecommendUpgrade,
+} from "./respond.js";
 export {
   base64Url,
   base64UrlDecode,
@@ -169,13 +178,17 @@ export {
 export { addSenderPerson, personIriFor, type SenderOptions, type SenderResult } from "./sender.js";
 // --- channels: slack (M2.1) ---
 export {
+  createSlackReplySender,
   SLACK_AGENTIC_METADATA_EVENT_TYPE,
   SLACK_CHANNEL,
+  SLACK_CHAT_POST_MESSAGE_ENDPOINT,
   SLACK_RAW_MEDIA_TYPE,
   SlackChannelAdapter,
   type SlackChannelAdapterOptions,
   type SlackParseContext,
   SlackParseError,
+  type SlackReplySender,
+  type SlackReplySenderOptions,
   slackEventToBridgeMessage,
 } from "./slack.js";
 export {

@@ -178,6 +178,8 @@ export const AGENTIC_AGENT_CARD = `${AGENTIC}agentCard`;
 export const AGENTIC_OFFERED_CHANNEL = `${AGENTIC}offeredChannel`;
 /** The protocol-doc hash bound into a pending offer (fail-closed binding). */
 export const AGENTIC_OFFER_PROTOCOL_HASH = `${AGENTIC}offerProtocolHash`;
+/** The protocol-document IRI bound into a pending offer. */
+export const AGENTIC_OFFER_PROTOCOL_SOURCE = `${AGENTIC}offerProtocolSource`;
 /** True when the pending offer is security-bearing (a decline ABORTS, never downgrades). */
 export const AGENTIC_OFFER_REQUIRED = `${AGENTIC}offerRequired`;
 /** The last transition time (`xsd:dateTime`). */

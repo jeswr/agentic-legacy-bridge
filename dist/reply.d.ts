@@ -47,6 +47,12 @@ export interface BuildReplyOptions {
     /** The sending agent IRI (`schema:sender`). http(s) only; invalid → omitted. */
     readonly sender?: string;
     /**
+     * Human-readable answer text placed beside the structured carrier. Control
+     * characters are stripped and the value is capped before it reaches a channel.
+     * The onboarding/A2A recommendation is appended automatically when present.
+     */
+    readonly humanText?: string;
+    /**
      * An injectable signer. When provided, the credential is signed (Data Integrity
      * over the canonical graph — the M2 `solid-vc` adapter) and typed
      * `VerifiableCredential`. When absent, the payload is an honest UNSIGNED reply.
@@ -70,6 +76,12 @@ export interface BuiltReply {
     readonly mimePart: MimePart;
     /** Reply headers (`X-Agentic-Reply` → the pod copy) — safe, single-line values only. */
     readonly headers: Readonly<Record<string, string>>;
+    /**
+     * The complete plain-text legacy-channel body: the answer, where available,
+     * followed by the single upgrade recommendation. Absent only when neither was
+     * supplied. Channel senders must use this as plain text, never as markup.
+     */
+    readonly humanText?: string;
     /** A plain-text onboarding block for the human body, when an onboarding URL was given. */
     readonly onboardingBlock?: string;
 }

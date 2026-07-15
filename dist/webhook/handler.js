@@ -79,9 +79,16 @@ export function createWebhookHandler(options) {
         }
     }
     const maxBodyBytes = options.maxBodyBytes ?? DEFAULT_MAX_BODY_BYTES;
+    if (!Number.isInteger(maxBodyBytes) ||
+        maxBodyBytes <= 0 ||
+        maxBodyBytes > DEFAULT_MAX_BODY_BYTES) {
+        throw new Error(`webhook: maxBodyBytes must be an integer from 1 through ${DEFAULT_MAX_BODY_BYTES}.`);
+    }
     if (options.maxMessagesPerDelivery !== undefined &&
-        (!Number.isInteger(options.maxMessagesPerDelivery) || options.maxMessagesPerDelivery <= 0)) {
-        throw new Error("webhook: maxMessagesPerDelivery must be a positive integer when supplied.");
+        (!Number.isInteger(options.maxMessagesPerDelivery) ||
+            options.maxMessagesPerDelivery <= 0 ||
+            options.maxMessagesPerDelivery > MAX_MESSAGES_PER_DELIVERY)) {
+        throw new Error(`webhook: maxMessagesPerDelivery must be an integer from 1 through ${MAX_MESSAGES_PER_DELIVERY}.`);
     }
     const maxMessagesPerDelivery = options.maxMessagesPerDelivery ?? MAX_MESSAGES_PER_DELIVERY;
     const now = options.now ?? Date.now;

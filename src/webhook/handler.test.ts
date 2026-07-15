@@ -2,7 +2,7 @@
 import { createHmac } from "node:crypto";
 import { Parser, Store } from "n3";
 import { describe, expect, it } from "vitest";
-import { createWebhookHandler, type WebhookAuditEvent } from "./handler.js";
+import { createWebhookHandler, DEFAULT_MAX_BODY_BYTES, type WebhookAuditEvent } from "./handler.js";
 import type { WebhookRequest } from "./request.js";
 
 const CONTAINER = "https://alice.example/inbox/";
@@ -88,6 +88,24 @@ describe("createWebhookHandler — construction is fail-closed", () => {
         writeFetch: recordingFetch().fetchImpl,
       }),
     ).toThrow(/verifyToken/);
+  });
+
+  it.each([
+    0,
+    -1,
+    1.5,
+    Number.NaN,
+    Number.POSITIVE_INFINITY,
+    DEFAULT_MAX_BODY_BYTES + 1,
+  ])("rejects an invalid/unbounded maxBodyBytes at construction: %s", (maxBodyBytes) => {
+    expect(() =>
+      createWebhookHandler({
+        channel: { channel: "slack", signingSecret: SLACK_SECRET },
+        container: CONTAINER,
+        writeFetch: recordingFetch().fetchImpl,
+        maxBodyBytes,
+      }),
+    ).toThrow(/maxBodyBytes/);
   });
 });
 
@@ -426,7 +444,7 @@ describe("WhatsApp webhook handler — end to end", () => {
   });
 
   it("rejects construction with a non-positive-integer maxMessagesPerDelivery", () => {
-    for (const bad of [0, -1, 2.5, Number.NaN]) {
+    for (const bad of [0, -1, 2.5, Number.NaN, Number.POSITIVE_INFINITY, 1001]) {
       expect(() =>
         createWebhookHandler({
           channel: { channel: "whatsapp", appSecret: META_SECRET, verifyToken: VERIFY_TOKEN },
@@ -435,7 +453,7 @@ describe("WhatsApp webhook handler — end to end", () => {
           maxMessagesPerDelivery: bad,
           now,
         }),
-      ).toThrow(/maxMessagesPerDelivery must be a positive integer/);
+      ).toThrow(/maxMessagesPerDelivery must be an integer/);
     }
   });
 });

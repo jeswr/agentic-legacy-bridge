@@ -10,11 +10,10 @@ choices in [`docs/DECISIONS.md`](./docs/DECISIONS.md).
 
 > **Scope.** Email is the first channel; the entire input is untrusted. The core is fully **hermetic** —
 > the LLM interpreter, the reply signer, and the channel transport are all **injectable seams**, so
-> there is no live-LLM, crypto, or network dependency in the core. **M2.0 (landed)** makes the whole
-> pipeline **channel-neutral** (`BridgeMessage` + `ChannelAdapter.parse`, below); **M2.1 (landed)**
-> adds the **Slack** parse transform + adapter (below). A native WhatsApp adapter, a live LLM
-> interpreter, `solid-vc` signing, and an inbound-webhook service are the remaining M2 phases (see
-> *Follow-ups* and [`docs/M2-DESIGN.md`](./docs/M2-DESIGN.md)).
+> there is no mandatory live-LLM, crypto, or network dependency in the core. M2's channel-neutral
+> spine, Slack and WhatsApp transforms, slot-constrained LLM interpreter, stateless webhook seam,
+> pod-persisted upgrade state machine, and approval-gated Slack reply path have landed. Every live
+> credential, endpoint, fetch, signer, and approval decision remains injected by the host.
 
 ## The four rungs
 
@@ -110,6 +109,7 @@ const reply = await buildReply({
 // reply.inlineHtml  → the <script type="application/ld+json"> block (HTML-safe)
 // reply.mimePart    → the multipart/alternative application/ld+json part
 // reply.headers     → { "X-Agentic-Reply": … }
+// reply.humanText   → answer + one recommendation to continue in full A2A mode
 
 // negotiation (pure)
 const cap = detectBridgeCapability({ headers: inboundHeaders });
@@ -168,19 +168,69 @@ flagged `agentic:identityStatus "unverified"`. Our own structured-reply metadata
 (`metadata.event_type: "agentic_reply"`) is mapped into `BridgeMessage.signals` so a bridge-capable
 Slack counterparty is detected by `detectBridgeCapability`.
 
-**Events API signature-verification contract (for the M2.4 webhook service — not built here).** The
-transform authenticates nothing about the *source*; the deployed receiver must, over the **raw request
-body before any JSON parse**: verify `X-Slack-Signature` = `v0=` + HMAC-SHA256(signing secret,
-`v0:<X-Slack-Request-Timestamp>:<raw-body>`) in constant time, reject a timestamp skew > 300 s, and ack
-within **3 s** (Slack retries ×3 with `X-Slack-Retry-Num`). A deterministic in-pod slug maps a
-retried/replayed delivery to the same URL, but the current `importInbound` write path is a plain `PUT`
-(overwrite) — retry/replay **idempotency is a property the M2.4 service must add** via create-only
-writes (`If-None-Match: *`, treating `412` as already-imported), not something this M2.1 adapter
-provides. The `url_verification` handshake is answered by the service (echo `challenge`) — the
-transform refuses it.
+**Events API signature-verification contract.** The transform authenticates nothing about the
+*source*; the deployed `./webhook` receiver verifies, over the **raw request body before any JSON
+parse**, `X-Slack-Signature` = `v0=` + HMAC-SHA256(signing secret,
+`v0:<X-Slack-Request-Timestamp>:<raw-body>`) in constant time, rejects timestamp skew > 300 s, and
+keeps the hot path deterministic. Create-only pod writes (`If-None-Match: *`; `412` = already
+imported) make Slack retries/replays idempotent, and the receiver answers `url_verification` by
+echoing its signed challenge.
 The live remote read (`conversations.history` backfill / Socket Mode / the bot-token file fetch) MUST
 route through `@jeswr/guarded-fetch`, with the bot token only as a request header. Full contract in the
 `src/slack.ts` module doc.
+
+## Respond and recommend the A2A upgrade
+
+`respondAndRecommendUpgrade` is the explicit outbound policy boundary: it answers on a configured
+legacy channel, embeds the normal structured carrier, and appends one link recommending full agentic
+(A2A) mode. It **defaults to approval-required**. With no approver it returns a complete
+`pending-approval` draft and performs no send; `auto-send` is available only as an explicit opt-in.
+Missing/blank answers use an honest review-needed acknowledgement rather than fabricating content.
+
+```ts
+import {
+  SlackChannelAdapter,
+  respondAndRecommendUpgrade,
+} from "@jeswr/agentic-legacy-bridge";
+
+const slack = new SlackChannelAdapter({
+  reply: {
+    botToken: process.env.SLACK_BOT_TOKEN!,
+    // fetch is injectable for recorded-fixture tests; global fetch is the live default.
+    // apiEndpoint may be injected, but is fail-closed to this exact Slack HTTPS endpoint:
+    apiEndpoint: process.env.SLACK_API_ENDPOINT ?? "https://slack.com/api/chat.postMessage",
+  },
+});
+
+const outcome = await respondAndRecommendUpgrade({
+  adapter: slack,
+  target: { to: "C123ABC456", inReplyToId: "C123ABC456:1784383200.000100" },
+  answer: "Tuesday at 14:00 works for me.",
+  upgradeUrl: process.env.A2A_UPGRADE_URL!,
+  reply: {
+    inReplyTo: "urn:agentic:raw:…",
+    podCopyUrl: "https://pod.example/replies/1.ttl",
+    issuer: process.env.AGENT_WEBID!,
+  },
+  approve: async (draft) => approvalQueue.approve(draft),
+  // deliveryMode: "auto-send", // explicit opt-in only; not recommended as the default
+});
+```
+
+The live Slack sender posts top-level plain text for accessibility, disables mrkdwn and URL/media
+unfurls, replies only to validated Slack conversation/thread IDs, and puts only the advertised
+channel set plus pod-copy pointer in `metadata.event_payload`. Inbound bot/app-authored-message
+refusal (preventing a reply loop) is scoped to **this bridge's own identity, per field and
+fail-closed** — pass `ownBotId`/`ownAppId` (from Slack's `auth.test`) to
+`SlackChannelAdapter`/`slackEventToBridgeMessage` so a DIFFERENT counterparty's own bridge bot can
+still be read for its Rung-3 capability signal (including Slack's `bot_message` subtype). A message
+is only ever accepted as foreign when EVERY identity signal it carries is both comparable (the
+matching own-id is configured) and non-matching; an uncomparable signal (an own-id left
+unconfigured, or a bare `bot_message` subtype with no id at all) is conservatively refused, so a
+partial own-identity configuration can never reopen the loop. Omit both to keep the original safe
+default of refusing every bot/app message. The bot token is attached only
+to the exact `https://slack.com/api/chat.postMessage` origin/path; redirects and oversized/stalled
+responses are refused.
 
 ## The inbound webhook service (M2.4)
 
@@ -219,7 +269,45 @@ export const POST = createFetchWebhookHandler({
 - **No SSRF surface at webhook time.** The handler makes NO payload-derived fetch — the only outbound
   is the pod write (own trusted origin, redirect-refusing).
 
-## The channel-upgrade state machine (M2.4)
+## Exact live configuration and credentials
+
+The package never reads environment variables itself; these names define the recommended **host
+adapter contract**. The host maps them into the injected options shown above, so unit tests use fake
+fetches and recorded fixtures without any secret.
+
+| Name | Required for | Exact value / source |
+|---|---|---|
+| `SLACK_SIGNING_SECRET` | Slack Events webhook | Slack app → **Basic Information → App Credentials → Signing Secret**. This is not the deprecated verification token. Inject as `channel.signingSecret`. |
+| `SLACK_BOT_TOKEN` | Slack replies (and optional API backfill) | Bot User OAuth Token beginning `xoxb-`, with `chat:write`; install/invite the app to each target conversation. Add only the history scopes for inbound surfaces actually enabled (`channels:history`, `groups:history`, `im:history`, `mpim:history`) and `app_mentions:read` if subscribing to `app_mention`. |
+| `SLACK_EVENT_SUBSCRIPTIONS` | Slack app configuration | Subscribe only to the surfaces the deployment imports: one or more of `message.channels`, `message.groups`, `message.im`, `message.mpim`, plus `app_mention` if desired. Point the Events API Request URL at `WEBHOOK_PUBLIC_URL`. This is configuration, not a secret. |
+| `SLACK_API_ENDPOINT` | Slack replies | Optional; if set it must be exactly `https://slack.com/api/chat.postMessage`. The strict endpoint gate prevents bearer-token exfiltration. |
+| `WEBHOOK_PUBLIC_URL` | Slack app configuration | Public HTTPS URL mounted to `createFetchWebhookHandler`, for example `https://bridge.example/webhooks/slack`; enter it as the Slack Events API **Request URL**. The package does not read this value. |
+| `POD_INBOX_CONTAINER` | Webhook persistence | Canonical owner-controlled Solid container URL ending `/`, with no query/fragment, e.g. `https://alice.example/inbox/`. |
+| `BRIDGE_WEBID` | Pod ACL provisioning | The bridge service-agent WebID granted **Append only** on `POD_INBOX_CONTAINER`; keep owner `Read/Write/Control`. The webhook never writes ACLs. |
+| `SOLID_OIDC_ISSUER` | Constructing `writeFetch` | Solid issuer used by the host's client-credentials/DPoP flow. |
+| `SOLID_CLIENT_ID` | Constructing `writeFetch` | Bridge service client identifier. |
+| `SOLID_CLIENT_SECRET` | Constructing `writeFetch` | Bridge service client secret, held only in the deployment secret store. Inject the resulting authenticated fetch as `writeFetch`; never pass the secret to this package. |
+| `POD_RELATIONSHIP_CONTAINER` | Upgrade-state persistence | Owner-private Solid container ending `/`, e.g. `https://alice.example/relationships/`. Relationship resources require ETag-enabled `GET` plus conditional `PUT`; this must not be public or Append-only. |
+| `NEGOTIATION_WEBID` | Relationship ACL / upgrade orchestration | A separate service/owner WebID granted `Read` + `Write` on `POD_RELATIONSHIP_CONTAINER`; do not widen the webhook identity's Append-only inbox grant. |
+| `NEGOTIATION_SOLID_OIDC_ISSUER` | Constructing relationship `readFetch`/`writeFetch` | Solid issuer for the negotiation identity's client-credentials/DPoP flow. |
+| `NEGOTIATION_SOLID_CLIENT_ID` | Constructing relationship `readFetch`/`writeFetch` | Negotiation identity client identifier. |
+| `NEGOTIATION_SOLID_CLIENT_SECRET` | Constructing relationship `readFetch`/`writeFetch` | Negotiation identity client secret, held only in the deployment secret store. Inject authenticated fetch functions; never pass the secret into relationship data. |
+| `AGENT_WEBID` | Reply issuer / provenance | Replying agent's HTTPS WebID. |
+| `ODRL_MANDATE_IRI` | Interpretation provenance | HTTPS IRI of the owner's mandate; inject as `mandateIri`. |
+| `A2A_UPGRADE_URL` | Upgrade recommendation | Credential-free HTTPS onboarding/A2A continuation URL (opaque token in fragment/path is allowed; max 2048 characters). |
+| `REPLY_DELIVERY_MODE` | Outbound policy | Recommended `approval-required` (also the code default). Set `auto-send` only after a maintainer explicitly accepts the impersonation, loop, and mistaken-answer risk. |
+
+Email remains the shipped M1 hardened parser plus the injectable `ChannelAdapter` seam; this package
+does **not** open an IMAP or SMTP connection itself. For a conventional live IMAP/SMTP host adapter,
+the maintainer must provide `EMAIL_IMAP_HOST`, `EMAIL_IMAP_PORT`, `EMAIL_IMAP_SECURE`,
+`EMAIL_IMAP_USERNAME`, and either `EMAIL_IMAP_PASSWORD` or an OAuth access/refresh-token provider for
+inbound; plus `EMAIL_SMTP_HOST`, `EMAIL_SMTP_PORT`, `EMAIL_SMTP_SECURE`, `EMAIL_SMTP_USERNAME`,
+`EMAIL_SMTP_PASSWORD` (or OAuth provider), and `EMAIL_FROM` for replies. Those credentials belong only
+to the injected email adapter and deployment secret store. Gmail API or Microsoft Graph deployments
+instead supply their provider's OAuth client id/secret, refresh token and mailbox identifier; no
+provider-specific OAuth implementation is hidden in this package.
+
+## The channel-upgrade state machine (M2.5)
 
 `transition()` + the `RelationshipStore` / orchestration (`src/upgrade-state.ts`, `src/upgrade.ts`)
 model, pod-persisted per counterparty, the ratchet from a legacy channel toward an accountable A2A
@@ -229,6 +317,8 @@ upgraded`, with fail-closed transitions. **Discovery is gated on a control-of-bo
 downgrades** (it aborts + surfaces); the **email floor works in every state**. The live probe/offer
 transport is an **injectable seam** defaulting to `@jeswr/guarded-fetch`'s DNS-pinning node fetch
 (https-only, redirect-refusing, verified-endpoint-only) — so it is fully hermetically testable.
+`offer-pending` is written with optimistic concurrency **before** transport; an outage leaves a
+durable, identical-offer-only retry point, and the peer response resolves it with the persisted ETag.
 
 ## Security posture
 
@@ -248,18 +338,19 @@ transport is an **injectable seam** defaulting to `@jeswr/guarded-fetch`'s DNS-p
 - **Everything written is owner-private** (owner-only WAC ACL, written FIRST), never public.
 - **The security/value tail is never auto-executed** from an LLM interpretation, at any confidence
   (`classifyReliability`'s hard rule).
+- **Outbound replies require approval by default.** Parsing/interpretation never implies authority to
+  send; `auto-send` is a deliberate host opt-in, and bot/app-authored Slack events are refused to
+  prevent responder loops.
 - **Outbound (M2 adapters)** MUST route untrusted remote reads through `@jeswr/guarded-fetch` (node
   DNS-pin, https-only, private/loopback/metadata-blocked, redirect-refusing); the pod write uses the
   injectable authed fetch and refuses redirects.
 
 ## Follow-ups (M2+)
 
-- **Channels:** Slack parse **landed (M2.1)** — see *Slack* above; the live Slack read/reply
-  (`conversations.history` backfill, Socket Mode, the `chat.postMessage` metadata carrier) + a native
-  WhatsApp Cloud adapter, the already-working Matrix path (`@jeswr/matrix-chat-to-pod`), and
-  Gmail / Microsoft Graph adapters — each behind the `ChannelAdapter` seam, guarded-fetch for reads.
-- **Live LLM interpreter:** an adapter over `@jeswr/solid-a2a` `parseIntent({ translate })` implementing
-  the same `Interpreter` interface (method `LlmInterpretation`).
+- **Channels:** Slack parse/webhook/reply and native WhatsApp parsing/webhook have landed. Remaining
+  transport work is Slack `conversations.history` backfill + Socket Mode, WhatsApp free-form/template
+  send policy, and Gmail / Microsoft Graph adapters — each behind `ChannelAdapter`, guarded-fetch for
+  reads.
 - **Reply signing + verification:** a `@jeswr/solid-vc` Data-Integrity signer for the `sign` seam
   and the matching `AgenticReplyVerifier` adapter (until injected, inbound `AgenticReply` blocks
   stay `SelfReported` — never auto-run).

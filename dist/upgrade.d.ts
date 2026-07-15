@@ -77,6 +77,8 @@ export interface PodRelationshipStoreOptions {
     readonly writeFetch: typeof globalThis.fetch;
     /** The read `fetch` for loads (defaults to `writeFetch`). */
     readonly readFetch?: typeof globalThis.fetch;
+    /** Maximum relationship Turtle bytes read from the pod (default 256 KiB, max 1 MiB). */
+    readonly maxStateBytes?: number;
 }
 /**
  * A pod-backed {@link RelationshipStore}: one owner-private Turtle resource per
@@ -144,9 +146,9 @@ export declare function discoverCard(store: RelationshipStore, personIri: string
  * Send an {@link UpgradeOffer} to the verified card endpoint via the injectable
  * transport, then resolve the peer's response through `decideUpgrade` fail-closed. The
  * transport target is the VERIFIED `agentCardUrl` only. The intermediate `offer-pending`
- * is transient (not persisted): a transport failure leaves the relationship at
- * `card-discovered` (retryable). The RESOLVED state (upgraded / stay / aborted) is
- * persisted with the loaded version (optimistic concurrency).
+ * state is persisted BEFORE transport. If delivery fails, that durable state is retained
+ * and an identical retry resumes it; a different offer is refused. The resolved state
+ * (upgraded / stay / aborted) is then saved with optimistic concurrency.
  */
 export declare function offerAndNegotiate(store: RelationshipStore, personIri: string, offer: UpgradeOffer, transport: UpgradeTransport, now?: Date): Promise<TransitionResult>;
 /**

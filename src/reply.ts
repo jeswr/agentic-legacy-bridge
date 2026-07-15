@@ -62,6 +62,12 @@ export interface BuildReplyOptions {
   /** The sending agent IRI (`schema:sender`). http(s) only; invalid → omitted. */
   readonly sender?: string;
   /**
+   * Human-readable answer text placed beside the structured carrier. Control
+   * characters are stripped and the value is capped before it reaches a channel.
+   * The onboarding/A2A recommendation is appended automatically when present.
+   */
+  readonly humanText?: string;
+  /**
    * An injectable signer. When provided, the credential is signed (Data Integrity
    * over the canonical graph — the M2 `solid-vc` adapter) and typed
    * `VerifiableCredential`. When absent, the payload is an honest UNSIGNED reply.
@@ -87,12 +93,19 @@ export interface BuiltReply {
   readonly mimePart: MimePart;
   /** Reply headers (`X-Agentic-Reply` → the pod copy) — safe, single-line values only. */
   readonly headers: Readonly<Record<string, string>>;
+  /**
+   * The complete plain-text legacy-channel body: the answer, where available,
+   * followed by the single upgrade recommendation. Absent only when neither was
+   * supplied. Channel senders must use this as plain text, never as markup.
+   */
+  readonly humanText?: string;
   /** A plain-text onboarding block for the human body, when an onboarding URL was given. */
   readonly onboardingBlock?: string;
 }
 
 const MAX_NAME_CHARS = 200;
 const MAX_OFFERS = 32;
+const MAX_HUMAN_TEXT_CHARS = 20_000;
 
 /**
  * The self-contained JSON-LD context (every term defined → deterministic RDFC-1.0).
@@ -212,13 +225,20 @@ export async function buildReply(options: BuildReplyOptions): Promise<BuiltReply
   const podCopy = safeHttpIri(options.podCopyUrl);
   if (podCopy !== undefined) headers["X-Agentic-Reply"] = podCopy;
 
+  const answer = cleanHumanText(options.humanText);
+  const onboardingBlock = onboarding !== undefined ? onboardingBlockFor(onboarding) : undefined;
+  const humanText = [answer, onboardingBlock]
+    .filter((part): part is string => part !== undefined)
+    .join("\n\n");
+
   const result: BuiltReply = {
     credential,
     signed,
     inlineHtml,
     mimePart,
     headers,
-    ...(onboarding !== undefined ? { onboardingBlock: onboardingBlockFor(onboarding) } : {}),
+    ...(humanText !== "" ? { humanText } : {}),
+    ...(onboardingBlock !== undefined ? { onboardingBlock } : {}),
   };
   return result;
 }
@@ -243,8 +263,15 @@ function onboardingBlockFor(url: string): string {
   return [
     "---",
     "This message includes a machine-readable version an AI assistant can act on.",
-    `Want your own assistant to read it (and reply in kind)? Set one up: ${url}`,
+    `Recommended: continue this conversation in full agentic (A2A) mode: ${url}`,
   ].join("\n");
+}
+
+/** Control-strip, trim and cap an answer before any channel can send it. */
+function cleanHumanText(value: string | undefined): string | undefined {
+  if (value === undefined) return undefined;
+  const clean = sanitizeText(value).trim().slice(0, MAX_HUMAN_TEXT_CHARS).trim();
+  return clean === "" ? undefined : clean;
 }
 
 /** Validate an ISO-8601 datetime → canonical UTC ISO, or undefined. */

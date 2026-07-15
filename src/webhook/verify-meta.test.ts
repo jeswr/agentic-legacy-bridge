@@ -95,6 +95,15 @@ describe("metaVerificationChallenge — the GET registration handshake", () => {
     expect(metaVerificationChallenge(query, VERIFY_TOKEN)).toEqual({ ok: false });
   });
 
+  it("refuses an attacker-sized verify token without attacker-sized compare buffers", () => {
+    const query = {
+      "hub.mode": "subscribe",
+      "hub.verify_token": "x".repeat(1024 * 1024),
+      "hub.challenge": "9988",
+    };
+    expect(metaVerificationChallenge(query, VERIFY_TOKEN)).toEqual({ ok: false });
+  });
+
   it("REFUSES when hub.mode is not subscribe", () => {
     const query = {
       "hub.mode": "unsubscribe",

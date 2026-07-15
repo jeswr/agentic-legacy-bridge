@@ -53,10 +53,12 @@ export { asChannel, CHANNEL_EXTENSION_URI, CHANNEL_PREFERENCE, CHANNELS_HEADER, 
 export { addInterpretation, clampConfidence, classifyReliability, DEFAULT_THRESHOLDS, } from "./reliability.js";
 // --- rung 3: structured reply ---
 export { buildReply, htmlSafeJson, } from "./reply.js";
+// --- RESPOND-AND-RECOMMEND-UPGRADE policy (approval-gated by default) ---
+export { respondAndRecommendUpgrade, } from "./respond.js";
 export { base64Url, base64UrlDecode, canonicalContainer, isValidEmailAddress, isWithinBase, mintUrn, normalizeEmailAddress, safeHttpIri, safeMailtoIri, safeMediaType, safeTelIri, sanitizeText, } from "./safe-iri.js";
 export { addSenderPerson, personIriFor } from "./sender.js";
 // --- channels: slack (M2.1) ---
-export { SLACK_AGENTIC_METADATA_EVENT_TYPE, SLACK_CHANNEL, SLACK_RAW_MEDIA_TYPE, SlackChannelAdapter, SlackParseError, slackEventToBridgeMessage, } from "./slack.js";
+export { createSlackReplySender, SLACK_AGENTIC_METADATA_EVENT_TYPE, SLACK_CHANNEL, SLACK_CHAT_POST_MESSAGE_ENDPOINT, SLACK_RAW_MEDIA_TYPE, SlackChannelAdapter, SlackParseError, slackEventToBridgeMessage, } from "./slack.js";
 export { canonicalPersonKey, createGuardedUpgradeTransport, createPodRelationshipStore, decodeUpgradeResponse, discoverCard, encodeUpgradeOffer, InMemoryRelationshipStore, offerAndNegotiate, RelationshipConflictError, recordBridgeDetected, recordIdentityVerified, recordTransportFailure, revokeVerification, } from "./upgrade.js";
 // --- M2.4: the channel-upgrade relationship state machine (M2-DESIGN.md §4) ---
 export { assertRelationshipInvariant, initialRelationship, parseRelationship, serializeRelationship, transition, } from "./upgrade-state.js";

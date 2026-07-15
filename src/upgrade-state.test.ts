@@ -109,6 +109,17 @@ describe("transition — fail-closed security rules", () => {
     expect(r).toMatchObject({ ok: false });
   });
 
+  it.each([
+    { ...rdfOffer, protocolHash: "" },
+    { ...rdfOffer, protocolHash: "x".repeat(257) },
+    { ...rdfOffer, protocolHash: "ok\nspoof" },
+    { ...rdfOffer, protocolSource: "javascript:alert(1)" },
+  ])("refuses malformed or unsafe offer fields", (offer) => {
+    expect(transition(toCardDiscovered(), { kind: "offer", offer }, AT)).toMatchObject({
+      ok: false,
+    });
+  });
+
   it("ABORTS on accept + protocol-hash mismatch", () => {
     const offered = expectOk(
       transition(toCardDiscovered(), { kind: "offer", offer: rdfOffer }, AT),
@@ -256,11 +267,19 @@ describe("serialize / parse round-trip (pod persistence)", () => {
     expect(await roundTrip(s)).toEqual(s);
   });
 
-  it("round-trips an offer-pending state (hash + required carried)", async () => {
+  it("round-trips every pending-offer binding", async () => {
     const offered = expectOk(
       transition(
         toCardDiscovered(),
-        { kind: "offer", offer: { targetChannel: "a2a", required: true, protocolHash: "h1" } },
+        {
+          kind: "offer",
+          offer: {
+            targetChannel: "a2a",
+            required: true,
+            protocolHash: "h1",
+            protocolSource: "https://example.test/protocol/v1",
+          },
+        },
         AT,
       ),
     );
@@ -270,6 +289,7 @@ describe("serialize / parse round-trip (pod persistence)", () => {
       targetChannel: "a2a",
       required: true,
       protocolHash: "h1",
+      protocolSource: "https://example.test/protocol/v1",
     });
   });
 

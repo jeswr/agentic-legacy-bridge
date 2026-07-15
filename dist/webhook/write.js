@@ -32,7 +32,7 @@ import { deterministicInterpreter } from "../interpret.js";
 import { mintUrn, safeMediaType } from "../safe-iri.js";
 /**
  * PUT a resource create-only (`If-None-Match: *`) via the injectable authed fetch.
- * Refuses a redirect (fail-closed), treats `412`/`409` (precondition failed on an
+ * Refuses a redirect (fail-closed), treats only `412` (precondition failed on an
  * existing resource) as `"exists"`, and throws on any other non-2xx. The redirect
  * guard runs BEFORE the status inspection.
  */
@@ -69,7 +69,7 @@ async function putCreateOnly(writeFetch, url, contentType, body) {
  * it — so a retried/replayed delivery, and a later backfill of the same message, both
  * resolve to the same URLs.
  *
- * @throws if a pod write fails (redirect / non-2xx other than the 412/409 exists path)
+ * @throws if a pod write fails (redirect / non-2xx other than the 412 exists path)
  *   or a resource URL escapes the configured container.
  */
 export async function writeMessageCreateOnly(options) {

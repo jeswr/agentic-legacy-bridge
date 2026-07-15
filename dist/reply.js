@@ -21,6 +21,7 @@ import { safeHttpIri, sanitizeText } from "./safe-iri.js";
 import { A2A_RDF, AGENTIC, DCT, PROV } from "./vocab.js";
 const MAX_NAME_CHARS = 200;
 const MAX_OFFERS = 32;
+const MAX_HUMAN_TEXT_CHARS = 20_000;
 /**
  * The self-contained JSON-LD context (every term defined → deterministic RDFC-1.0).
  * Shared with {@link import("./metadata/emit.js").buildActionMetadata} — the envelope
@@ -140,13 +141,19 @@ export async function buildReply(options) {
     const podCopy = safeHttpIri(options.podCopyUrl);
     if (podCopy !== undefined)
         headers["X-Agentic-Reply"] = podCopy;
+    const answer = cleanHumanText(options.humanText);
+    const onboardingBlock = onboarding !== undefined ? onboardingBlockFor(onboarding) : undefined;
+    const humanText = [answer, onboardingBlock]
+        .filter((part) => part !== undefined)
+        .join("\n\n");
     const result = {
         credential,
         signed,
         inlineHtml,
         mimePart,
         headers,
-        ...(onboarding !== undefined ? { onboardingBlock: onboardingBlockFor(onboarding) } : {}),
+        ...(humanText !== "" ? { humanText } : {}),
+        ...(onboardingBlock !== undefined ? { onboardingBlock } : {}),
     };
     return result;
 }
@@ -169,8 +176,15 @@ function onboardingBlockFor(url) {
     return [
         "---",
         "This message includes a machine-readable version an AI assistant can act on.",
-        `Want your own assistant to read it (and reply in kind)? Set one up: ${url}`,
+        `Recommended: continue this conversation in full agentic (A2A) mode: ${url}`,
     ].join("\n");
+}
+/** Control-strip, trim and cap an answer before any channel can send it. */
+function cleanHumanText(value) {
+    if (value === undefined)
+        return undefined;
+    const clean = sanitizeText(value).trim().slice(0, MAX_HUMAN_TEXT_CHARS).trim();
+    return clean === "" ? undefined : clean;
 }
 /** Validate an ISO-8601 datetime → canonical UTC ISO, or undefined. */
 function isoOrUndefined(value) {

@@ -90,7 +90,7 @@ export interface WriteMessageResult {
  * it — so a retried/replayed delivery, and a later backfill of the same message, both
  * resolve to the same URLs.
  *
- * @throws if a pod write fails (redirect / non-2xx other than the 412/409 exists path)
+ * @throws if a pod write fails (redirect / non-2xx other than the 412 exists path)
  *   or a resource URL escapes the configured container.
  */
 export declare function writeMessageCreateOnly(options: WriteMessageOptions): Promise<WriteMessageResult>;

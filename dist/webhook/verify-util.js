@@ -14,6 +14,13 @@ import { timingSafeEqual } from "node:crypto";
 export function constantTimeEqual(a, b) {
     if (typeof a !== "string" || typeof b !== "string")
         return false;
+    // Compare UTF-16 lengths BEFORE encoding. The expected Slack/Meta signature has a
+    // fixed public length, and a configured verify token's length is not secret; a
+    // mismatch therefore needs no constant-time treatment. More importantly, this
+    // prevents a megabyte attacker token/header from forcing a megabyte Buffer
+    // allocation merely to discover that it cannot match a short expected value.
+    if (a.length !== b.length)
+        return false;
     const bufA = Buffer.from(a, "utf8");
     const bufB = Buffer.from(b, "utf8");
     if (bufA.length !== bufB.length)
